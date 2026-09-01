@@ -1,5 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useStore, fmtR, cortarData } from '../lib/store'
+import { hojeBRT, cortarDataBRT } from '../lib/dateBR'
+import { lucroDoPeriodo } from '../lib/lucro'
 import { motion } from 'motion/react'
 import {
   Package,
@@ -92,7 +94,7 @@ const KpiCard = ({
 // 2. COMPONENTE PRINCIPAL
 // ============================================================
 export function Dashboard({ onNavigate }: { onNavigate?: (page: any) => void }) {
-  const { produtos, movimentacoes, vendas, caixaEntradas, clientes } = useStore()
+  const { produtos, vendas, caixaEntradas, clientes } = useStore()
 
   // --- Estado de filtro de período ---
   const [periodo, setPeriodo] = useState<'hoje' | 'semana' | 'mes'>('hoje')
@@ -103,21 +105,20 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: any) => void }) 
     setTimeout(() => setRecarregando(false), 400)
   }
 
-  // --- Datas ---
-  const hoje = new Date().toISOString().split('T')[0]
-  const ontem = new Date(Date.now() - 86400000).toISOString().split('T')[0]
+  // --- Datas (BRT) ---
+  const hoje = hojeBRT()
+  const ontem = useMemo(() => {
+    const d = new Date(); d.setDate(d.getDate() - 1); return hojeBRT(d)
+  }, [])
+  const corteSemana = useMemo(() => cortarDataBRT(7), [])
+  const corteMes = useMemo(() => cortarDataBRT(30), [])
 
-  // --- Filtro de vendas por período (ignora vendas em fiado não liquidadas) ---
+  // --- Filtro de vendas por período ---
   const vendasFiltradas = useMemo(() => {
-    const vendasEfetivas = vendas.filter(v => v.pagamento !== 'fiado')
-    if (periodo === 'hoje') return vendasEfetivas.filter(v => v.data === hoje)
-    if (periodo === 'semana') {
-      const corte = cortarData(7)
-      return vendasEfetivas.filter(v => !corte || v.data >= corte)
-    }
-    const corte = cortarData(30)
-    return vendasEfetivas.filter(v => !corte || v.data >= corte)
-  }, [vendas, periodo, hoje])
+    if (periodo === 'hoje') return vendas.filter(v => v.data === hoje)
+    const corte = periodo === 'semana' ? corteSemana : corteMes
+    return vendas.filter(v => !corte || v.data >= corte)
+  }, [vendas, periodo, hoje, corteSemana, corteMes])
 
   // --- Cálculos principais ---
   const receitaPeriodo = vendasFiltradas.reduce((s, v) => s + v.total, 0)
@@ -126,60 +127,45 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: any) => void }) 
   const totalItensEstoque = produtos.reduce((s, p) => s + p.estoque, 0)
   const criticos = produtos.filter(p => p.estoque <= p.estoqueMin)
 
-  // Custo de compras/entradas de mercadoria no período
-  const custoComprasPeriodo = useMemo(() => {
-    const corte = periodo === 'hoje' ? hoje : periodo === 'semana' ? cortarData(7) : cortarData(30)
-    
-    // Entradas via movimentações de estoque
-    const entradasEstoque = movimentacoes
-      .filter(m => m.tipo === 'entrada' && (periodo === 'hoje' ? m.data === hoje : !corte || m.data >= corte))
-      .reduce((s, m) => {
-        const prod = produtos.find(p => p.id === m.produtoId)
-        return s + (m.quantidade * (prod?.precoCompra || 0))
-      }, 0)
-
-    // Sangrias/saídas de caixa registradas como compras
-    const sangriasCaixa = caixaEntradas
-      .filter(e => e.tipo === 'sangria' && (periodo === 'hoje' ? e.data === hoje : !corte || e.data >= corte))
-      .reduce((s, e) => s + e.valor, 0)
-
-    return Math.max(entradasEstoque, sangriasCaixa)
-  }, [movimentacoes, caixaEntradas, produtos, periodo, hoje])
-
-  // Lucro líquido = Receita do período - Despesas/Compras do período
-  const lucroLiquidoPeriodo = receitaPeriodo - custoComprasPeriodo
+  // Lucro líquido = Receita do período - CMV (custo dos itens vendidos).
+  // Mesma fórmula usada no fechamento de caixa.
+  const lucroLiquidoPeriodo = useMemo(() => {
+    return lucroDoPeriodo(vendasFiltradas, produtos, caixaEntradas).lucro
+  }, [vendasFiltradas, produtos, caixaEntradas])
 
   // Comparação para variação percentual
   const variacaoReceita = useMemo(() => {
-    const vendasEfetivas = vendas.filter(v => v.pagamento !== 'fiado')
     if (periodo === 'hoje') {
-      const receitaOntem = vendasEfetivas.filter(v => v.data === ontem).reduce((s, v) => s + v.total, 0)
+      const receitaOntem = vendas.filter(v => v.data === ontem && v.pagamento !== 'fiado')
+        .reduce((s, v) => s + v.total, 0)
       return receitaOntem > 0
         ? { value: ((receitaPeriodo - receitaOntem) / receitaOntem) * 100, label: 'vs ontem' }
         : null
     }
     if (periodo === 'semana') {
-      const semanaPassadaInicio = cortarData(14)
-      const semanaPassadaFim = cortarData(7)
-      const receitaSemanaAnterior = vendasEfetivas
-        .filter(v => (!semanaPassadaInicio || v.data >= semanaPassadaInicio) && (!semanaPassadaFim || v.data < semanaPassadaFim))
+      const d = new Date(); d.setDate(d.getDate() - 14)
+      const semanaPassadaInicio = hojeBRT(d)
+      const semanaPassadaFim = corteSemana
+      const receitaSemanaAnterior = vendas.filter(v => v.pagamento !== 'fiado' &&
+        (!semanaPassadaInicio || v.data >= semanaPassadaInicio) && v.data < semanaPassadaFim)
         .reduce((s, v) => s + v.total, 0)
       return receitaSemanaAnterior > 0
         ? { value: ((receitaPeriodo - receitaSemanaAnterior) / receitaSemanaAnterior) * 100, label: 'vs sem. ant.' }
         : null
     }
     if (periodo === 'mes') {
-      const mesPassadoInicio = cortarData(60)
-      const mesPassadoFim = cortarData(30)
-      const receitaMesAnterior = vendasEfetivas
-        .filter(v => (!mesPassadoInicio || v.data >= mesPassadoInicio) && (!mesPassadoFim || v.data < mesPassadoFim))
+      const d = new Date(); d.setDate(d.getDate() - 60)
+      const mesPassadoInicio = hojeBRT(d)
+      const mesPassadoFim = corteMes
+      const receitaMesAnterior = vendas.filter(v => v.pagamento !== 'fiado' &&
+        (!mesPassadoInicio || v.data >= mesPassadoInicio) && v.data < mesPassadoFim)
         .reduce((s, v) => s + v.total, 0)
       return receitaMesAnterior > 0
         ? { value: ((receitaPeriodo - receitaMesAnterior) / receitaMesAnterior) * 100, label: 'vs mês ant.' }
         : null
     }
     return null
-  }, [vendas, periodo, ontem, receitaPeriodo])
+  }, [vendas, periodo, ontem, corteSemana, corteMes, receitaPeriodo])
 
   // --- Top 5 do período selecionado ---
   const topMap: Record<string, number> = {}
@@ -244,19 +230,21 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: any) => void }) 
     .slice(0, 5)
 
   // --- Dados para o gráfico (últimos 7 dias - apenas vendas liquidadas) ---
-  const dias = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date()
-    d.setDate(d.getDate() - (6 - i))
-    const key = d.toISOString().split('T')[0]
-    const total = vendas
-      .filter(v => v.data === key && v.pagamento !== 'fiado')
-      .reduce((s, v) => s + v.total, 0)
-    return {
-      dia: key,
-      total,
-      label: d.toLocaleDateString('pt-BR', { weekday: 'short' }),
-    }
-  })
+  const dias = useMemo(() => {
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date()
+      d.setDate(d.getDate() - (6 - i))
+      const key = hojeBRT(d)
+      const total = vendas
+        .filter(v => v.data === key && v.pagamento !== 'fiado')
+        .reduce((s, v) => s + v.total, 0)
+      return {
+        dia: key,
+        total,
+        label: d.toLocaleDateString('pt-BR', { weekday: 'short' }),
+      }
+    })
+  }, [vendas])
 
   const maxQty = top5.length ? Math.max(...top5.map(([, qty]) => qty)) : 1
 
@@ -360,7 +348,7 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: any) => void }) 
           <KpiCard
             label={periodo === 'hoje' ? 'Lucro Líquido Hoje' : periodo === 'semana' ? 'Lucro Líquido Semana' : 'Lucro Líquido Mês'}
             value={fmtR(lucroLiquidoPeriodo)}
-            sub={`Compras: -${fmtR(custoComprasPeriodo)}`}
+            sub={`CMV: -${fmtR(Math.max(0, receitaPeriodo - lucroLiquidoPeriodo))}`}
             icon={DollarSign}
             color={
               lucroLiquidoPeriodo >= 0

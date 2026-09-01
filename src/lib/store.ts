@@ -1,5 +1,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { hojeBRT, isoParaDataBRT, cortarDataBRT } from './dateBR'
+import { cmvDaVenda } from './lucro'
+import * as sync from './sync'
 
 export type Produto = {
   id: string
@@ -85,7 +88,18 @@ function uid() {
 }
 
 function hoje() {
-  return new Date().toISOString().split('T')[0]
+  return hojeBRT()
+}
+
+// Helper de write-through: dispara o upsert correspondente no Supabase em background.
+// Erros de rede viram warning no console — a mutação local persiste em LS,
+// e na próxima carga a app reidrata do LS caso o Supabase esteja fora.
+function trySync(fn: () => Promise<void>) {
+  fn().catch((e: any) => {
+    // silencioso: sem usuário logado ou sem rede = write local-only
+    if (e?.message?.includes('Sem usuário')) return
+    console.warn('[sync] falhou:', e?.message || e)
+  })
 }
 
 export type PedidoEntrega = {
@@ -139,6 +153,7 @@ type Store = {
   toggleTema: () => void
   resetDemo: () => void
   clearAll: () => void
+  hydrateFromRemote: (data: sync.CargaRemota) => void
 }
 
 const DEMO_PRODUTOS: Omit<Produto, 'id'>[] = [
@@ -162,9 +177,19 @@ export const useStore = create<Store>()(
       entregas: [],
       tema: 'light',
 
-      addProduto: (p) => set(s => ({ produtos: [...s.produtos, { ...p, id: uid() }] })),
-      updateProduto: (p) => set(s => ({ produtos: s.produtos.map(x => x.id === p.id ? p : x) })),
-      deleteProduto: (id) => set(s => ({ produtos: s.produtos.filter(x => x.id !== id) })),
+      addProduto: (p) => {
+        const novo: Produto = { ...p, id: uid() }
+        set(s => ({ produtos: [...s.produtos, novo] }))
+        trySync(() => sync.upsertProduto(novo))
+      },
+      updateProduto: (p) => {
+        set(s => ({ produtos: s.produtos.map(x => x.id === p.id ? p : x) }))
+        trySync(() => sync.upsertProduto(p))
+      },
+      deleteProduto: (id) => {
+        set(s => ({ produtos: s.produtos.filter(x => x.id !== id) }))
+        trySync(() => sync.deleteProduto(id))
+      },
 
       addMovimentacao: (m) => {
         const mov: Movimentacao = { ...m, id: uid() }
@@ -172,12 +197,18 @@ export const useStore = create<Store>()(
           const prods = s.produtos.map(p => {
             if (p.id !== m.produtoId) return p
             const novoEst = m.tipo === 'entrada' ? p.estoque + m.quantidade : p.estoque - m.quantidade
-            return { ...p, estoque: Math.max(0, novoEst) }
+            const atualizado = { ...p, estoque: Math.max(0, novoEst) }
+            trySync(() => sync.upsertProduto(atualizado))
+            return atualizado
           })
           return { movimentacoes: [...s.movimentacoes, mov], produtos: prods }
         })
+        trySync(() => sync.insertMovimentacao(mov))
       },
-      deleteMovimentacao: (id) => set(s => ({ movimentacoes: s.movimentacoes.filter(x => x.id !== id) })),
+      deleteMovimentacao: (id) => {
+        set(s => ({ movimentacoes: s.movimentacoes.filter(x => x.id !== id) }))
+        trySync(() => sync.deleteMovimentacao(id))
+      },
 
       addVenda: (v) => {
         const venda: Venda = { ...v, id: uid(), criadoEm: new Date().toISOString() }
@@ -219,33 +250,78 @@ export const useStore = create<Store>()(
           }))]
           return { vendas: [...s.vendas, venda], produtos: prods, clientes, caixaEntradas, movimentacoes }
         })
+        // Write-through
+        trySync(() => sync.insertVenda(venda, v.itens))
+        if (v.clienteId && v.pagamento === 'fiado') {
+          const cli = useStore.getState().clientes.find(c => c.id === v.clienteId)
+          if (cli) trySync(() => sync.upsertCliente(cli))
+        }
+        if (v.pagamento !== 'fiado') {
+          trySync(() => sync.insertCaixaEntrada({
+            tipo: 'venda', pagamento: v.pagamento, valor: v.total,
+            data: hoje(), descricao: `Venda ${v.pagamento}`,
+            caixaId: useStore.getState().caixaAberto?.id,
+          }))
+        }
+        v.itens.forEach(item => {
+          trySync(() => sync.insertMovimentacao({
+            id: uid(), produtoId: item.produtoId, tipo: 'saida',
+            quantidade: item.quantidade, data: v.data, obs: `Venda ${v.pagamento}`,
+          }))
+        })
+        // Atualiza estoque dos produtos no Supabase
+        setTimeout(() => {
+          const prods = useStore.getState().produtos
+          v.itens.forEach(item => {
+            const p = prods.find(x => x.id === item.produtoId)
+            if (p) trySync(() => sync.upsertProduto(p))
+          })
+        }, 0)
       },
 
-      addCliente: (c) => set(s => ({ clientes: [...s.clientes, { ...c, id: uid() }] })),
-      updateCliente: (c) => set(s => ({ clientes: s.clientes.map(x => x.id === c.id ? c : x) })),
-      deleteCliente: (id) => set(s => ({ clientes: s.clientes.filter(x => x.id !== id) })),
+      addCliente: (c) => {
+        const novo: Cliente = { ...c, id: uid() }
+        set(s => ({ clientes: [...s.clientes, novo] }))
+        trySync(() => sync.upsertCliente(novo))
+      },
+      updateCliente: (c) => {
+        set(s => ({ clientes: s.clientes.map(x => x.id === c.id ? c : x) }))
+        trySync(() => sync.upsertCliente(c))
+      },
+      deleteCliente: (id) => {
+        set(s => ({ clientes: s.clientes.filter(x => x.id !== id) }))
+        trySync(() => sync.deleteCliente(id))
+      },
 
-      abrirCaixa: () => set(s => s.caixaAberto ? s : { caixaAberto: { id: uid(), abertoEm: new Date().toISOString() } }),
+      abrirCaixa: () => {
+        if (useStore.getState().caixaAberto) return
+        const novo: Caixa = { id: uid(), abertoEm: new Date().toISOString() }
+        set(() => ({ caixaAberto: novo }))
+        trySync(() => sync.upsertCaixa(novo))
+      },
       fecharCaixa: () => set(s => {
         const caixaAberto = s.caixaAberto
         if (!caixaAberto) return s
-        const inicio = caixaAberto.abertoEm.slice(0, 10)
+        const inicio = isoParaDataBRT(caixaAberto.abertoEm)
+        const vendasCaixa = s.vendas.filter(v => isoParaDataBRT(v.criadoEm) >= inicio && v.pagamento !== 'fiado')
         const entradasCaixa = s.caixaEntradas.filter(e => e.caixaId === caixaAberto.id || (!e.caixaId && e.data >= inicio))
-        const vendasCaixa = s.vendas.filter(v => v.criadoEm >= caixaAberto.abertoEm && v.pagamento !== 'fiado')
-        const custo = vendasCaixa.flatMap(v => v.itens).reduce((sum, item) => {
-          const produto = s.produtos.find(p => p.id === item.produtoId)
-          return sum + (produto?.precoCompra || 0) * item.quantidade
-        }, 0)
-        const caixaFechado = {
+        const custo = vendasCaixa.reduce((sum, v) => sum + cmvDaVenda(v, s.produtos), 0)
+        const caixaFechado: Caixa = {
           ...caixaAberto,
           fechadoEm: new Date().toISOString(),
           faturamentoBruto: entradasCaixa.filter(e => e.tipo === 'venda').reduce((sum, e) => sum + e.valor, 0),
           lucroLiquido: vendasCaixa.reduce((sum, v) => sum + v.total, 0) - custo,
           vendas: vendasCaixa.length,
         }
+        trySync(() => sync.upsertCaixa(caixaFechado))
         return { caixaAberto: undefined, caixas: [caixaFechado, ...(s.caixas || [])] }
       }),
-      addCaixaEntrada: (e) => set(s => s.caixaAberto ? { caixaEntradas: [...s.caixaEntradas, { ...e, caixaId: s.caixaAberto.id }] } : s),
+      addCaixaEntrada: (e) => {
+        if (!useStore.getState().caixaAberto) return
+        const entrada = { ...e, caixaId: useStore.getState().caixaAberto!.id }
+        set(s => ({ caixaEntradas: [...s.caixaEntradas, entrada] }))
+        trySync(() => sync.insertCaixaEntrada(entrada))
+      },
 
       quitarFiado: (clienteId, valor, formaPagamento) => set(s => {
         if (!s.caixaAberto) return s
@@ -278,6 +354,11 @@ export const useStore = create<Store>()(
           criadoEm: new Date().toISOString(),
         }
 
+        // Write-through
+        trySync(() => sync.upsertCliente({ ...cliente, saldo: novoSaldo }))
+        trySync(() => sync.insertCaixaEntrada(entradaCaixa))
+        trySync(() => sync.insertVenda(novaVendaQuitada, []))
+
         return {
           clientes: clientesAtualizados,
           vendas: [...s.vendas, novaVendaQuitada],
@@ -299,7 +380,9 @@ export const useStore = create<Store>()(
           const prods = s.produtos.map(prod => {
             const item = p.itens.find(i => i.produtoId === prod.id)
             if (!item) return prod
-            return { ...prod, estoque: Math.max(0, prod.estoque - item.quantidade) }
+            const atualizado = { ...prod, estoque: Math.max(0, prod.estoque - item.quantidade) }
+            trySync(() => sync.upsertProduto(atualizado))
+            return atualizado
           })
           const movimentacoes = [...s.movimentacoes, ...p.itens.map(item => ({
             id: uid(),
@@ -309,6 +392,15 @@ export const useStore = create<Store>()(
             data: hoje(),
             obs: `Pedido Entrega #${id.slice(-4)} (${p.clienteNome})`,
           }))]
+          // Write-through
+          trySync(() => sync.upsertEntrega(novaEntrega))
+          p.itens.forEach(item => {
+            trySync(() => sync.insertMovimentacao({
+              id: uid(), produtoId: item.produtoId, tipo: 'saida',
+              quantidade: item.quantidade, data: hoje(),
+              obs: `Pedido Entrega #${id.slice(-4)} (${p.clienteNome})`,
+            }))
+          })
           return {
             entregas: [novaEntrega, ...s.entregas],
             produtos: prods,
@@ -318,55 +410,69 @@ export const useStore = create<Store>()(
         return id
       },
 
-      updateStatusEntrega: (id, status, entregador) => set(s => {
-        const entrega = s.entregas.find(e => e.id === id)
-        if (!entrega) return s
+      updateStatusEntrega: (id, status, entregador) => {
+        let novaVendaGerada: Venda | null = null
+        let entradaCaixaGerada: EntradaCaixa | null = null
+        let entregaAtualizada: PedidoEntrega | null = null
 
-        const entregasAtualizadas = s.entregas.map(e =>
-          e.id === id
-            ? {
-                ...e,
-                status,
-                entregadorId: entregador?.id ?? e.entregadorId,
-                entregadorNome: entregador?.nome ?? e.entregadorNome,
-              }
-            : e
-        )
+        set(s => {
+          const entrega = s.entregas.find(e => e.id === id)
+          if (!entrega) return s
 
-        // Se foi entregue, lança venda liquidada e entrada no caixa
-        let vendas = s.vendas
-        let caixaEntradas = s.caixaEntradas
-
-        if (status === 'entregue' && entrega.status !== 'entregue') {
-          if (!s.caixaAberto) return s
-          const novaVenda: Venda = {
-            id: uid(),
-            data: hoje(),
-            pagamento: entrega.pagamento,
-            itens: entrega.itens,
-            total: entrega.total,
-            obs: `Entrega Concluída (${entrega.clienteNome}) - ${entrega.endereco}`,
-            criadoEm: new Date().toISOString(),
+          entregaAtualizada = {
+            ...entrega,
+            status,
+            entregadorId: entregador?.id ?? entrega.entregadorId,
+            entregadorNome: entregador?.nome ?? entrega.entregadorNome,
           }
-          vendas = [...vendas, novaVenda]
-          if (entrega.pagamento !== 'fiado') {
-            caixaEntradas = [...caixaEntradas, {
-              tipo: 'venda',
-              pagamento: entrega.pagamento,
-              valor: entrega.total,
+
+          const entregasAtualizadas = s.entregas.map(e =>
+            e.id === id ? entregaAtualizada! : e
+          )
+
+          // Se foi entregue, lança venda liquidada e entrada no caixa
+          let vendas = s.vendas
+          let caixaEntradas = s.caixaEntradas
+
+          if (status === 'entregue' && entrega.status !== 'entregue') {
+            if (!s.caixaAberto) return s
+            novaVendaGerada = {
+              id: uid(),
               data: hoje(),
-              descricao: `Entrega #${id.slice(-4)} - ${entrega.clienteNome}`,
-              caixaId: s.caixaAberto.id,
-            }]
+              pagamento: entrega.pagamento,
+              itens: entrega.itens,
+              total: entrega.total,
+              obs: `Entrega Concluída (${entrega.clienteNome}) - ${entrega.endereco}`,
+              criadoEm: new Date().toISOString(),
+            }
+            vendas = [...vendas, novaVendaGerada]
+            if (entrega.pagamento !== 'fiado') {
+              entradaCaixaGerada = {
+                tipo: 'venda',
+                pagamento: entrega.pagamento,
+                valor: entrega.total,
+                data: hoje(),
+                descricao: `Entrega #${id.slice(-4)} - ${entrega.clienteNome}`,
+                caixaId: s.caixaAberto.id,
+              }
+              caixaEntradas = [...caixaEntradas, entradaCaixaGerada]
+            }
           }
-        }
 
-        return {
-          entregas: entregasAtualizadas,
-          vendas,
-          caixaEntradas,
+          return {
+            entregas: entregasAtualizadas,
+            vendas,
+            caixaEntradas,
+          }
+        })
+
+        if (entregaAtualizada) trySync(() => sync.upsertEntrega(entregaAtualizada as PedidoEntrega))
+        if (novaVendaGerada) {
+          const venda = novaVendaGerada as Venda
+          trySync(() => sync.insertVenda(venda, venda.itens))
         }
-      }),
+        if (entradaCaixaGerada) trySync(() => sync.insertCaixaEntrada(entradaCaixaGerada as EntradaCaixa))
+      },
 
       toggleTema: () => set(s => {
         const next = s.tema === 'light' ? 'dark' : 'light'
@@ -379,6 +485,10 @@ export const useStore = create<Store>()(
         movimentacoes: [], vendas: [], clientes: [], caixaEntradas: [], caixas: [], caixaAberto: undefined
       }),
       clearAll: () => set({ produtos: [], movimentacoes: [], vendas: [], clientes: [], caixaEntradas: [], caixas: [], caixaAberto: undefined }),
+      hydrateFromRemote: (data) => set(s => ({
+        ...data,
+        caixaAberto: data.caixas.find(c => !c.fechadoEm) || s.caixaAberto,
+      })),
     }),
     { name: 'adega-pro-store' }
   )
@@ -426,7 +536,5 @@ export function calcularEstoqueMinimoRecomendado(
 
 export function cortarData(dias: number | 'all') {
   if (dias === 'all') return null
-  const d = new Date()
-  d.setDate(d.getDate() - Number(dias))
-  return d.toISOString().split('T')[0]
+  return cortarDataBRT(Number(dias))
 }
