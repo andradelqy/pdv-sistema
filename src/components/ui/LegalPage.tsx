@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { Shield, FileText } from 'lucide-react';
@@ -31,7 +31,7 @@ export function LegalPage({ title, lastUpdated, icon = 'file', children }: Legal
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+        transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] as const }}
         className="relative z-10 w-full max-w-4xl"
       >
         <div className="bg-white/80 backdrop-blur-2xl rounded-3xl shadow-[0_20px_50px_-15px_rgba(0,0,0,0.15),_inset_0_1px_1px_rgba(255,255,255,0.8)] border border-white/60 p-8 sm:p-12 lg:p-16">
