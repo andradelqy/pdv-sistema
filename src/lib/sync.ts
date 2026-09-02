@@ -3,6 +3,7 @@
 // Load inicial: tenta Supabase primeiro; se falhar/estiver vazio, usa LS.
 
 import { supabase } from './supabase'
+import { hojeBRT } from './dateBR'
 import type {
   Produto, Movimentacao, Venda, ItemVenda,
   Cliente, EntradaCaixa, Caixa, PedidoEntrega,
@@ -17,6 +18,25 @@ async function userOrThrow(): Promise<string> {
   const id = await getUserId()
   if (!id) throw new Error('Sem usuário logado — não dá pra sincronizar.')
   return id
+}
+
+function dataValidaOuHoje(value?: string | null): string {
+  if (!value) return hojeBRT()
+  const data = String(value).slice(0, 10)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(data)) return data
+  return hojeBRT()
+}
+
+function dataValidaOuNull(value?: string | null): string | null {
+  if (!value) return null
+  const data = String(value).slice(0, 10)
+  return /^\d{4}-\d{2}-\d{2}$/.test(data) ? data : null
+}
+
+function isoValidoOuAgora(value?: string | null): string {
+  if (!value) return new Date().toISOString()
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString()
 }
 
 // -------- produtos --------
@@ -79,8 +99,8 @@ function toRowMov(m: Movimentacao, userId: string) {
   return {
     id: m.id, user_id: userId,
     produto_id: m.produtoId, tipo: m.tipo,
-    quantidade: m.quantidade, data: m.data,
-    lote: m.lote ?? null, validade: m.validade ?? null, obs: m.obs ?? null,
+    quantidade: m.quantidade, data: dataValidaOuHoje(m.data),
+    lote: m.lote ?? null, validade: dataValidaOuNull(m.validade), obs: m.obs ?? null,
   }
 }
 function fromRowMov(r: any): Movimentacao {
@@ -105,7 +125,7 @@ function toRowCliente(c: Cliente, userId: string) {
     id: c.id, user_id: userId, nome: c.nome,
     telefone: c.telefone ?? null,
     limite: c.limite, saldo: c.saldo, compras: c.compras,
-    ultima_cobranca: c.ultimaCobranca ?? null,
+    ultima_cobranca: dataValidaOuNull(c.ultimaCobranca),
   }
 }
 function fromRowCliente(r: any): Cliente {
@@ -128,9 +148,9 @@ export async function deleteCliente(id: string) {
 function toRowVenda(v: Venda, userId: string) {
   return {
     id: v.id, user_id: userId,
-    data: v.data, cliente_id: v.clienteId ?? null,
+    data: dataValidaOuHoje(v.data), cliente_id: v.clienteId ?? null,
     pagamento: v.pagamento, total: v.total,
-    obs: v.obs ?? null, criado_em: v.criadoEm,
+    obs: v.obs ?? null, criado_em: isoValidoOuAgora(v.criadoEm),
   }
 }
 function fromRowVenda(r: any): Omit<Venda, 'itens'> {
@@ -159,7 +179,7 @@ export async function insertVenda(v: Venda, itens: ItemVenda[]) {
 function toRowCaixa(c: Caixa, userId: string) {
   return {
     id: c.id, user_id: userId,
-    aberto_em: c.abertoEm, fechado_em: c.fechadoEm ?? null,
+    aberto_em: isoValidoOuAgora(c.abertoEm), fechado_em: c.fechadoEm ? isoValidoOuAgora(c.fechadoEm) : null,
     faturamento_bruto: c.faturamentoBruto ?? null,
     lucro_liquido: c.lucroLiquido ?? null,
     vendas: c.vendas ?? null,
@@ -182,7 +202,7 @@ function toRowCaixaEntrada(e: EntradaCaixa, userId: string) {
   return {
     user_id: userId, caixa_id: e.caixaId ?? null,
     tipo: e.tipo, pagamento: e.pagamento ?? null,
-    valor: e.valor, data: e.data, descricao: e.descricao ?? null,
+    valor: e.valor, data: dataValidaOuHoje(e.data), descricao: e.descricao ?? null,
   }
 }
 function fromRowCaixaEntrada(r: any): EntradaCaixa {
@@ -208,7 +228,7 @@ function toRowEntrega(p: PedidoEntrega, userId: string) {
     pagamento: p.pagamento, status: p.status,
     entregador_id: p.entregadorId ?? null,
     entregador_nome: p.entregadorNome ?? null,
-    data: p.data, criado_em: p.criadoEm, obs: p.obs ?? null,
+    data: dataValidaOuHoje(p.data), criado_em: isoValidoOuAgora(p.criadoEm), obs: p.obs ?? null,
   }
 }
 function fromRowEntrega(r: any): PedidoEntrega {
