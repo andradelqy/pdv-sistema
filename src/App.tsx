@@ -8,7 +8,7 @@ import {
 import { supabase } from './lib/supabase';
 import { useStore } from './lib/store';
 import { carregarTudo } from './lib/sync';
-import { toast, ToastProvider } from './lib/toast';
+import { ToastProvider } from './lib/toast';
 import { Login } from './Login';
 import { Dashboard } from './pages/Dashboard';
 import { PDV } from './pages/PDV';
@@ -313,25 +313,27 @@ function AppContent() {
   const isDark = tema === 'dark';
 
   return (
-    <div className="h-screen flex overflow-hidden">
-      <Sidebar
-        page={page}
-        setPage={setPage}
-        menuOpen={menuOpen}
-        setMenuOpen={setMenuOpen}
-        tema={tema}
-        toggleTema={toggleTema}
-        alertas={alertas}
-        entregasPendentes={entregasPendentes}
-      />
-
-      <div className="flex-1 flex flex-col h-full overflow-hidden lg:ml-64">
-        <Topbar page={page} setMenuOpen={setMenuOpen} tema={tema} />
-        <main className={`flex-1 overflow-y-auto p-4 md:p-6 ${isDark ? 'bg-black' : 'bg-white'}`}>
-          {pageBlocked ? <Analises tipo="caixa" /> : content}
-        </main>
+    <>
+      <ToastProvider />
+      <div className="h-screen flex overflow-hidden">
+        <Sidebar
+          page={page}
+          setPage={setPage}
+          menuOpen={menuOpen}
+          setMenuOpen={setMenuOpen}
+          tema={tema}
+          toggleTema={toggleTema}
+          alertas={alertas}
+          entregasPendentes={entregasPendentes}
+        />
+        <div className="flex-1 flex flex-col h-full overflow-hidden lg:ml-64">
+          <Topbar page={page} setMenuOpen={setMenuOpen} tema={tema} />
+          <main className={`flex-1 overflow-y-auto p-4 md:p-6 ${isDark ? 'bg-black' : 'bg-white'}`}>
+            {pageBlocked ? <Analises tipo="caixa" /> : content}
+          </main>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
