@@ -1,210 +1,120 @@
 import { useState, useRef, useEffect } from 'react'
-import { supabase } from './lib/supabase'
 import { useStore, fmtR } from './lib/store'
-import { toast } from './lib/toast'
-import { Truck, MapPin, CheckCircle, Navigation, Phone, Clock } from 'lucide-react'
+import { MapContainer, TileLayer, Marker, Polyline, useMap } from 'react-leaflet'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
+import { Truck, MapPin, User, Navigation, Phone, CheckCircle, Package, DollarSign, Clock } from 'lucide-react'
+
+const motoIcon = L.divIcon({ html: `<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2" class="text-amber-500"><circle cx="12" cy="12" r="10"/></svg>`, className: '', iconSize: [32, 32] })
+
+function MapFollower({ lat, lng }: { lat: number; lng: number }) {
+  const map = useMap()
+  useEffect(() => { map.flyTo([lat, lng], 16) }, [lat, lng, map])
+  return null
+}
 
 export function AppEntregador() {
-  const { entregas, updateStatusEntrega } = useStore()
+  const { entregas, updateStatusEntrega, produtos } = useStore()
   const [rastreando, setRastreando] = useState(false)
-  const [status, setStatus] = useState('Inativo')
-  const entregadorNome = 'João MotoBoy'
+  const [currentPos, setCurrentPos] = useState<[number, number] | null>(null)
   const watchId = useRef<number | null>(null)
 
-  // Escuta novas entregas via WebSocket do Supabase
-  useEffect(() => {
-    const channel = supabase.channel('rastreamento_entregas')
-      .on('broadcast', { event: 'novo_pedido_entrega' }, (payload) => {
-        toast(`📦 Novo pedido para entrega! #${payload.payload.id.slice(-4)}`)
-      })
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [])
+  const pararRastreamento = () => {
+    if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current)
+    setRastreando(false)
+    setCurrentPos(null)
+  }
 
   const iniciarRastreamento = () => {
-    if (!navigator.geolocation) {
-      setStatus('Geolocalização não suportada.')
-      return
-    }
-
     setRastreando(true)
-    setStatus('Online e transmitindo rota...')
-
-    const channel = supabase.channel('rastreamento_entregas')
-
-    watchId.current = navigator.geolocation.watchPosition(
-      (pos) => {
-        const { latitude, longitude } = pos.coords
-        setStatus(`Online: Lat ${latitude.toFixed(4)}, Lng ${longitude.toFixed(4)}`)
-        
-        channel.send({
-          type: 'broadcast',
-          event: 'localizacao_atualizada',
-          payload: { 
-            entregador_id: 'entregador-123', 
-            nome: entregadorNome, 
-            lat: latitude, 
-            lng: longitude 
-          }
-        })
-      },
-      (err) => setStatus(`Erro de GPS: ${err.message}`),
-      { enableHighAccuracy: true, maximumAge: 0 }
-    )
+    watchId.current = navigator.geolocation.watchPosition((pos) => {
+      setCurrentPos([pos.coords.latitude, pos.coords.longitude])
+    })
   }
 
-  const pararRastreamento = () => {
-    if (watchId.current !== null) {
-      navigator.geolocation.clearWatch(watchId.current)
-      watchId.current = null
-    }
-    setRastreando(false)
-    setStatus('Inativo')
-  }
-
-  // Pedidos disponíveis para entrega
   const pedidosPendentes = entregas.filter(e => e.status === 'pendente')
-  const meusPedidosEmRota = entregas.filter(e => e.status === 'em_rota')
-
-  const aceitarEntrega = (id: string) => {
-    // Só permite aceitar se estiver rastreando
-    if (!rastreando) {
-      toast('Você precisa estar online para aceitar entregas.', 'warning')
-      return
-    }
-    updateStatusEntrega(id, 'em_rota', { id: 'entregador-123', nome: entregadorNome })
-    toast('Entrega aceita! Boa rota.')
-  }
-
-  const finalizarEntrega = (id: string) => {
-    updateStatusEntrega(id, 'entregue')
-    toast('Entrega finalizada com sucesso!', 'success')
-  }
+  const pedidosEmRota = entregas.filter(e => e.status === 'em_rota')
 
   return (
-    <div className="max-w-md mx-auto flex flex-col gap-5 p-4">
-      {/* Card Status & Rastreamento */}
-      <div className="bg-card border border-border rounded-xl p-5 shadow-sm text-center">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <Truck className="text-amber-500" size={22} />
-            <h2 className="text-lg font-bold text-left">App do Entregador</h2>
+    <div className="max-w-md mx-auto p-4 flex flex-col gap-6 pb-20">
+      <h1 className="text-2xl font-bold flex items-center gap-2 text-slate-800"><Truck className="text-emerald-500" /> Painel do Entregador</h1>
+      
+      {!rastreando ? (
+        <button onClick={iniciarRastreamento} className="w-full bg-emerald-600 text-white p-4 rounded-xl font-bold shadow-lg">Iniciar Rastreamento</button>
+      ) : (
+        <div className="space-y-4">
+          <div className="h-48 rounded-xl overflow-hidden border">
+            {currentPos ? (
+              <MapContainer center={currentPos} zoom={13} style={{ height: '100%', width: '100%' }}>
+                <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                <Marker position={currentPos} icon={motoIcon} />
+                <MapFollower lat={currentPos[0]} lng={currentPos[1]} />
+              </MapContainer>
+            ) : <div className="h-48 flex items-center justify-center">Aguardando GPS...</div>}
           </div>
-          <span className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${rastreando ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' : 'bg-muted text-muted-foreground'}`}>
-            {rastreando ? '● Online' : '○ Offline'}
-          </span>
+          <button onClick={pararRastreamento} className="w-full bg-rose-600 text-white p-4 rounded-xl font-bold">Encerrar Turno</button>
         </div>
+      )}
 
-        <div className="mb-4 p-3 bg-muted/50 rounded-lg text-xs font-mono text-muted-foreground border border-border">
-          {status}
-        </div>
-
-        {!rastreando ? (
-          <button 
-            onClick={iniciarRastreamento}
-            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl text-base shadow-md shadow-emerald-600/20 transition active:scale-95 cursor-pointer flex items-center justify-center gap-2"
-          >
-            <Navigation size={18} /> Ficar Online / Iniciar Rota
-          </button>
-        ) : (
-          <button 
-            onClick={pararRastreamento}
-            className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3.5 rounded-xl text-base transition active:scale-95 cursor-pointer shadow-md shadow-rose-600/20"
-          >
-            ⏹ Parar Transmissão
-          </button>
-        )}
-      </div>
-
-      {/* Minhas Entregas em Rota */}
-      {meusPedidosEmRota.length > 0 && (
-        <div className="flex flex-col gap-3">
-          <h3 className="text-sm font-bold uppercase tracking-wider text-amber-500 flex items-center gap-1.5">
-            <Clock size={16} /> Em Andamento ({meusPedidosEmRota.length})
-          </h3>
-          {meusPedidosEmRota.map(e => (
-            <div key={e.id} className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5 flex flex-col gap-2.5 shadow-sm">
-              <div className="flex justify-between items-start">
+      {pedidosEmRota.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-sm font-bold uppercase text-slate-500">Em Entrega</h2>
+          {pedidosEmRota.map(e => (
+            <div key={e.id} className="p-5 border-2 border-amber-500 rounded-2xl bg-amber-50 shadow-md">
+              <div className="flex justify-between items-start mb-3">
                 <div>
-                  <span className="font-bold text-base">{e.clienteNome}</span>
-                  <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                    <MapPin size={13} className="text-amber-500" /> {e.endereco}
-                  </div>
+                  <p className="font-bold text-lg">{e.clienteNome}</p>
+                  <p className="text-sm flex items-center gap-1"><MapPin size={14}/>{e.endereco}</p>
                 </div>
-                <span className="font-bold text-base text-primary">{fmtR(e.total)}</span>
+                <div className="text-right">
+                  <p className="text-xs text-slate-500">Valor</p>
+                  <p className="font-bold text-lg">{fmtR(e.total)}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-sm mb-4">
+                <div className="bg-white p-2 rounded flex items-center gap-2"><DollarSign size={16}/> {e.pagamento}</div>
+                <div className="bg-white p-2 rounded flex items-center gap-2"><Package size={16}/> {e.itens.length} itens</div>
+              </div>
+              
+              <div className="mb-4 space-y-1">
+                <p className="text-xs font-bold text-slate-500 uppercase">Itens:</p>
+                {e.itens.map((item, idx) => {
+                  const prod = produtos.find(p => p.id === item.produtoId);
+                  return (
+                    <div key={idx} className="flex justify-between text-sm bg-white p-2 rounded">
+                      <span>{item.quantidade}x {prod?.nome || 'Produto não encontrado'}</span>
+                    </div>
+                  );
+                })}
               </div>
 
-              {e.telefone && (
-                <a
-                  href={`https://wa.me/55${e.telefone.replace(/\D/g, '')}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-semibold hover:underline"
-                >
-                  <Phone size={12} /> WhatsApp: {e.telefone}
-                </a>
-              )}
-
-              {e.obs && <p className="text-xs text-muted-foreground bg-muted/40 p-2 rounded">Obs: {e.obs}</p>}
-
-              <button
-                onClick={() => finalizarEntrega(e.id)}
-                className="w-full mt-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm cursor-pointer active:scale-95"
+              <button 
+                onClick={() => updateStatusEntrega(e.id, 'entregue')} 
+                className="w-full bg-emerald-600 text-white p-4 rounded-xl font-bold flex items-center justify-center gap-2"
               >
-                <CheckCircle size={15} /> Confirmar Entrega Realizada
+                <CheckCircle size={20}/> Finalizar Entrega
               </button>
             </div>
           ))}
         </div>
       )}
 
-      {/* Pedidos Disponíveis para Aceitar */}
-      <div className="flex flex-col gap-3">
-        <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-          <Truck size={16} /> Pedidos Disponíveis ({pedidosPendentes.length})
-        </h3>
-
-        {pedidosPendentes.length === 0 ? (
-          <div className="p-6 text-center text-xs text-muted-foreground border border-dashed border-border rounded-xl">
-            Nenhum pedido aguardando entrega no momento.
-          </div>
-        ) : (
-          pedidosPendentes.map(e => (
-            <div key={e.id} className="p-4 rounded-xl border border-border bg-card flex flex-col gap-3 shadow-sm">
-              <div className="flex justify-between items-start">
-                <div>
-                  <span className="font-bold text-sm">{e.clienteNome}</span>
-                  <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                    <MapPin size={13} className="text-rose-500" /> {e.endereco}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="font-bold text-sm text-primary">{fmtR(e.total)}</div>
-                  <span className="text-[10px] text-muted-foreground">{e.pagamento}</span>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between pt-2 border-t border-border">
-                <span className="text-xs text-muted-foreground">Taxa: {fmtR(e.taxaEntrega)}</span>
-                {rastreando ? (
-                  <button
-                    onClick={() => aceitarEntrega(e.id)}
-                    className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg shadow-sm cursor-pointer active:scale-95 transition"
-                  >
-                    Aceitar Pedido
-                  </button>
-                ) : (
-                  <span className="text-xs text-muted-foreground italic flex items-center gap-1">
-                    <Clock size={12} /> Fique online para aceitar
-                  </span>
-                )}
-              </div>
+      <div className="space-y-3">
+        <h2 className="text-sm font-bold uppercase text-slate-500">Pedidos Disponíveis ({pedidosPendentes.length})</h2>
+        {pedidosPendentes.map(e => (
+          <div key={e.id} className="p-4 border rounded-xl bg-white shadow-sm flex justify-between items-center">
+            <div>
+              <p className="font-bold">{e.clienteNome}</p>
+              <p className="text-sm text-slate-600">{e.endereco}</p>
             </div>
-          ))
-        )}
+            <button 
+              onClick={() => updateStatusEntrega(e.id, 'em_rota', { id: 'ent-1', nome: 'Moto' })}
+              className="bg-slate-900 text-white px-4 py-2 rounded-lg font-bold text-sm"
+            >
+              Aceitar
+            </button>
+          </div>
+        ))}
       </div>
     </div>
   )

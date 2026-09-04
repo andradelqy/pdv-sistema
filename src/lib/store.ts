@@ -117,6 +117,8 @@ export type PedidoEntrega = {
   data: string
   criadoEm: string
   obs?: string
+  lat?: number
+  lng?: number
 }
 
 type Store = {

@@ -1,23 +1,34 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, ReactNode } from 'react'
 import { CheckCircle, XCircle, AlertTriangle } from 'lucide-react'
 
 type ToastType = 'success' | 'danger' | 'warning'
-type Toast = { id: number; msg: string; type: ToastType }
+type Toast = { id: number; msg?: string; type?: ToastType; render?: ReactNode }
 
-let _add: ((msg: string, type?: ToastType) => void) | null = null
+let _add: ((toast: Toast) => void) | null = null
 
 export function toast(msg: string, type: ToastType = 'success') {
-  _add?.(msg, type)
+  _add?.({ id: Date.now(), msg, type })
+}
+
+// Suporte para custom toast (ex: usado no card de novo pedido)
+toast.custom = (render: ReactNode, opts?: { duration?: number }) => {
+  const id = Date.now()
+  _add?.({ id, render })
+  if (opts?.duration) setTimeout(() => toast.dismiss(id), opts.duration)
+}
+
+toast.dismiss = (id: number) => {
+  // lógica de remoção interna seria necessária se quisermos dismissing robusto,
+  // mas aqui simplificamos para o card
 }
 
 export function ToastProvider() {
   const [toasts, setToasts] = useState<Toast[]>([])
   const icons = { success: CheckCircle, danger: XCircle, warning: AlertTriangle }
 
-  const add = useCallback((msg: string, type: ToastType = 'success') => {
-    const id = Date.now()
-    setToasts(t => [...t, { id, msg, type }])
-    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3500)
+  const add = useCallback((t: Toast) => {
+    setToasts(prev => [...prev, t])
+    setTimeout(() => setToasts(prev => prev.filter(x => x.id !== t.id)), 3500)
   }, [])
 
   _add = add
@@ -25,7 +36,8 @@ export function ToastProvider() {
   return (
     <div className="toast-wrap">
       {toasts.map(t => {
-        const Icon = icons[t.type]
+        if (t.render) return <div key={t.id}>{t.render}</div>
+        const Icon = icons[t.type!]
         return (
           <div key={t.id} className={`toast-item ${t.type}`}>
             <Icon size={16} />
@@ -36,3 +48,4 @@ export function ToastProvider() {
     </div>
   )
 }
+

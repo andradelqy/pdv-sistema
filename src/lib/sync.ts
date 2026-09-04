@@ -229,6 +229,7 @@ function toRowEntrega(p: PedidoEntrega, userId: string) {
     entregador_id: p.entregadorId ?? null,
     entregador_nome: p.entregadorNome ?? null,
     data: dataValidaOuHoje(p.data), criado_em: isoValidoOuAgora(p.criadoEm), obs: p.obs ?? null,
+    lat: p.lat ?? null, lng: p.lng ?? null,
   }
 }
 function fromRowEntrega(r: any): PedidoEntrega {
@@ -242,6 +243,7 @@ function fromRowEntrega(r: any): PedidoEntrega {
     entregadorNome: r.entregador_nome ?? undefined,
     data: r.data, criadoEm: r.criado_em,
     obs: r.obs ?? undefined,
+    lat: r.lat ?? undefined, lng: r.lng ?? undefined,
   }
 }
 export async function upsertEntrega(p: PedidoEntrega) {
