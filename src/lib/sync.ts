@@ -299,47 +299,32 @@ export async function carregarTudo(): Promise<CargaRemota | null> {
   }
 }
 
-// -------- migração one-shot: LS → Supabase --------
-export async function migrarDoLocalStorage(payload: {
-  produtos: Produto[]; movimentacoes: Movimentacao[]; vendas: Venda[];
-  clientes: Cliente[]; caixas: Caixa[]; caixaEntradas: EntradaCaixa[]; entregas: PedidoEntrega[];
-}): Promise<{ ok: boolean; totais: Record<string, number>; erro?: string }> {
-  const uid = await userOrThrow()
-  const totais: Record<string, number> = {}
-  const ins = async <T extends { id: string }>(tabela: string, rows: T[]) => {
-    if (!rows.length) { totais[tabela] = 0; return }
-    const { error } = await supabase.from(tabela).upsert(rows as any)
-    if (error) throw new Error(`${tabela}: ${error.message}`)
-    totais[tabela] = rows.length
+// Processa a fila de operações offline
+export async function processarFilaSync() {
+  const qStr = localStorage.getItem('sync_queue')
+  if (!qStr) return
+  const queue: { opName: string; args: any[] }[] = JSON.parse(qStr)
+  if (queue.length === 0) return
+
+  console.log(`[sync] processando ${queue.length} operações pendentes...`)
+  const ops: Record<string, Function> = {
+    upsertProduto, deleteProduto, upsertCliente, deleteCliente,
+    insertVenda, upsertCaixa, insertCaixaEntrada, upsertEntrega
   }
 
-  try {
-    await ins('produtos', payload.produtos.map(p => toRowProduto(p, uid) as any))
-    await ins('movimentacoes', payload.movimentacoes.map(m => toRowMov(m, uid) as any))
-    await ins('clientes', payload.clientes.map(c => toRowCliente(c, uid) as any))
-    await ins('caixas', payload.caixas.map(c => toRowCaixa(c, uid) as any))
-    await ins('caixa_entradas', payload.caixaEntradas.map(e => toRowCaixaEntrada(e, uid) as any))
-    await ins('entregas', payload.entregas.map(e => toRowEntrega(e, uid) as any))
-    // Vendas: 2 passos (vendas + itens)
-    if (payload.vendas.length) {
-      const vendasRows = payload.vendas.map(v => toRowVenda(v, uid))
-      const { error } = await supabase.from('vendas').upsert(vendasRows as any)
-      if (error) throw new Error(`vendas: ${error.message}`)
-      const itensRows = payload.vendas.flatMap(v =>
-        v.itens.map(i => ({ user_id: uid, venda_id: v.id, produto_id: i.produtoId, quantidade: i.quantidade, preco_unit: i.precoUnit }))
-      )
-      if (itensRows.length) {
-        const { error: e2 } = await supabase.from('itens_venda').insert(itensRows as any)
-        if (e2) throw new Error(`itens_venda: ${e2.message}`)
+  const novaFila: typeof queue = []
+  for (const op of queue) {
+    try {
+      if (ops[op.opName]) {
+        await ops[op.opName](...op.args)
+        console.log(`[sync] ${op.opName} concluído com sucesso`)
+      } else {
+        console.error(`[sync] Operação desconhecida: ${op.opName}`)
       }
-      totais['vendas'] = payload.vendas.length
-      totais['itens_venda'] = itensRows.length
-    } else {
-      totais['vendas'] = 0
-      totais['itens_venda'] = 0
+    } catch (e: any) {
+      console.error(`[sync] falhou ao processar ${op.opName}`, e)
+      novaFila.push(op)
     }
-    return { ok: true, totais }
-  } catch (e: any) {
-    return { ok: false, totais, erro: e?.message || String(e) }
   }
+  localStorage.setItem('sync_queue', JSON.stringify(novaFila))
 }

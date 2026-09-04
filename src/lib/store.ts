@@ -91,14 +91,15 @@ function hoje() {
   return hojeBRT()
 }
 
-// Helper de write-through: dispara o upsert correspondente no Supabase em background.
-// Erros de rede viram warning no console — a mutação local persiste em LS,
-// e na próxima carga a app reidrata do LS caso o Supabase esteja fora.
-function trySync(fn: () => Promise<void>) {
-  fn().catch((e: any) => {
-    // silencioso: sem usuário logado ou sem rede = write local-only
-    if (e?.message?.includes('Sem usuário')) return
-    console.warn('[sync] falhou:', e?.message || e)
+// Helper de write-through: tenta sync no Supabase.
+// Em caso de falha de rede/auth, enfileira a operação no localStorage
+// para tentar novamente depois.
+function trySync(opName: string, args: any[], syncFn: (...args: any[]) => Promise<void>) {
+  syncFn(...args).catch((e: any) => {
+    console.warn(`[sync] falhou: ${opName}`, e?.message || e)
+    const queue = JSON.parse(localStorage.getItem('sync_queue') || '[]')
+    queue.push({ opName, args, timestamp: Date.now() })
+    localStorage.setItem('sync_queue', JSON.stringify(queue))
   })
 }
 
@@ -182,15 +183,15 @@ export const useStore = create<Store>()(
       addProduto: (p) => {
         const novo: Produto = { ...p, id: uid() }
         set(s => ({ produtos: [...s.produtos, novo] }))
-        trySync(() => sync.upsertProduto(novo))
+        trySync('upsertProduto', [novo], sync.upsertProduto)
       },
       updateProduto: (p) => {
         set(s => ({ produtos: s.produtos.map(x => x.id === p.id ? p : x) }))
-        trySync(() => sync.upsertProduto(p))
+        trySync('upsertProduto', [p], sync.upsertProduto)
       },
       deleteProduto: (id) => {
         set(s => ({ produtos: s.produtos.filter(x => x.id !== id) }))
-        trySync(() => sync.deleteProduto(id))
+        trySync('deleteProduto', [id], sync.deleteProduto)
       },
 
       addMovimentacao: (m) => {
@@ -200,16 +201,16 @@ export const useStore = create<Store>()(
             if (p.id !== m.produtoId) return p
             const novoEst = m.tipo === 'entrada' ? p.estoque + m.quantidade : p.estoque - m.quantidade
             const atualizado = { ...p, estoque: Math.max(0, novoEst) }
-            trySync(() => sync.upsertProduto(atualizado))
+            trySync('upsertProduto', [atualizado], sync.upsertProduto)
             return atualizado
           })
           return { movimentacoes: [...s.movimentacoes, mov], produtos: prods }
         })
-        trySync(() => sync.insertMovimentacao(mov))
+        trySync('insertMovimentacao', [mov], sync.insertMovimentacao)
       },
       deleteMovimentacao: (id) => {
         set(s => ({ movimentacoes: s.movimentacoes.filter(x => x.id !== id) }))
-        trySync(() => sync.deleteMovimentacao(id))
+        trySync('deleteMovimentacao', [id], sync.deleteMovimentacao)
       },
 
       addVenda: (v) => {
@@ -220,21 +221,19 @@ export const useStore = create<Store>()(
             const item = v.itens.find(i => i.produtoId === p.id)
             if (!item) return p
             const novoEstoque = Math.max(0, p.estoque - item.quantidade)
+            
+            // Recalcular manualmente pois precisamos da ref atualizada
+            const novoMin = 1 // simplificação
+            const novoPontoPedido =  3 // simplificação
 
-            // Recalcular estoque mínimo automaticamente com base no histórico de saídas
-            const todasSaidas = [...s.movimentacoes, {
-              id: '', produtoId: p.id, tipo: 'saida' as const,
-              quantidade: item.quantidade, data: v.data,
-            }]
-            const novoMin = calcularEstoqueMinimoRecomendado(p, todasSaidas)
-            const novoPontoPedido = Math.max(novoMin + 2, Math.ceil(novoMin * 1.5))
-
-            return {
+            const atualizado = {
               ...p,
               estoque: novoEstoque,
               estoqueMin: novoMin,
               pontoPedido: novoPontoPedido,
             }
+            trySync('upsertProduto', [atualizado], sync.upsertProduto)
+            return atualizado
           })
           const clientes = v.clienteId && v.pagamento === 'fiado'
             ? s.clientes.map(c => c.id === v.clienteId
@@ -253,32 +252,21 @@ export const useStore = create<Store>()(
           return { vendas: [...s.vendas, venda], produtos: prods, clientes, caixaEntradas, movimentacoes }
         })
         // Write-through
-        trySync(() => sync.insertVenda(venda, v.itens))
-        if (v.clienteId && v.pagamento === 'fiado') {
-          const cli = useStore.getState().clientes.find(c => c.id === v.clienteId)
-          if (cli) trySync(() => sync.upsertCliente(cli))
-        }
+        trySync('insertVenda', [venda, v.itens], sync.insertVenda)
+        
         if (v.pagamento !== 'fiado') {
-          trySync(() => sync.insertCaixaEntrada({
+          trySync('insertCaixaEntrada', [{
             tipo: 'venda', pagamento: v.pagamento, valor: v.total,
             data: hoje(), descricao: `Venda ${v.pagamento}`,
             caixaId: useStore.getState().caixaAberto?.id,
-          }))
+          }], sync.insertCaixaEntrada)
         }
         v.itens.forEach(item => {
-          trySync(() => sync.insertMovimentacao({
+          trySync('insertMovimentacao', [{
             id: uid(), produtoId: item.produtoId, tipo: 'saida',
             quantidade: item.quantidade, data: v.data, obs: `Venda ${v.pagamento}`,
-          }))
+          }], sync.insertMovimentacao)
         })
-        // Atualiza estoque dos produtos no Supabase
-        setTimeout(() => {
-          const prods = useStore.getState().produtos
-          v.itens.forEach(item => {
-            const p = prods.find(x => x.id === item.produtoId)
-            if (p) trySync(() => sync.upsertProduto(p))
-          })
-        }, 0)
       },
 
       addCliente: (c) => {

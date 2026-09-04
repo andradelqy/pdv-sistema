@@ -8,6 +8,7 @@ import {
 import { supabase } from './lib/supabase';
 import { useStore } from './lib/store';
 import { carregarTudo } from './lib/sync';
+import { processarFilaSync } from './lib/sync';
 import { ToastProvider } from './lib/toast';
 import { Login } from './Login';
 import { Dashboard } from './pages/Dashboard';
