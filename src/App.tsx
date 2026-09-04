@@ -8,7 +8,6 @@ import {
 import { supabase } from './lib/supabase';
 import { useStore } from './lib/store';
 import { carregarTudo } from './lib/sync';
-import { processarFilaSync } from './lib/sync';
 import { ToastProvider } from './lib/toast';
 import { Login } from './Login';
 import { Dashboard } from './pages/Dashboard';
@@ -22,10 +21,11 @@ import { Analises } from './pages/Analises';
 import { PontoEletronico } from './PontoEletronico';
 import { AppEntregador } from './AppEntregador';
 import { PainelMapa } from './PainelMapa';
+import { UserManagement } from './components/UserManagement';
 import { Termos } from './pages/Termos';
 import { Privacidade } from './pages/Privacidade';
 
-type Page = 'dashboard' | 'pdv' | 'entregas_pdv' | 'ponto' | 'entregador' | 'mapa' | 'produtos' | 'movimentacoes' | 'compras' | 'clientes' | 'caixa' | 'historico' | 'abc' | 'qpr' | 'alertas' | 'backup';
+type Page = 'dashboard' | 'pdv' | 'entregas_pdv' | 'ponto' | 'entregador' | 'mapa' | 'produtos' | 'movimentacoes' | 'compras' | 'clientes' | 'caixa' | 'historico' | 'abc' | 'qpr' | 'alertas' | 'backup' | 'usuarios';
 
 const nav: { group: string; items: { page: Page; label: string; icon: typeof Gauge }[] }[] = [
   { group: 'Visão Geral', items: [{ page: 'dashboard', label: 'Dashboard', icon: Gauge }] },
@@ -35,11 +35,11 @@ const nav: { group: string; items: { page: Page; label: string; icon: typeof Gau
   { group: 'Entregas', items: [{ page: 'entregador', label: 'App Entregador', icon: Truck }, { page: 'mapa', label: 'Rastreamento', icon: MapPinned }] },
   { group: 'Financeiro', items: [{ page: 'caixa', label: 'Caixa', icon: Wallet }] },
   { group: 'Análise', items: [{ page: 'abc', label: 'Curva ABC', icon: BarChart3 }, { page: 'qpr', label: 'Matriz QPR', icon: ChartNoAxesCombined }, { page: 'alertas', label: 'Alertas', icon: Bell }] },
-  { group: 'Sistema', items: [{ page: 'backup', label: 'Backup', icon: Database }] },
+  { group: 'Sistema', items: [{ page: 'backup', label: 'Backup', icon: Database }, { page: 'usuarios', label: 'Usuários', icon: Users }] },
 ];
 
 const titles: Record<Page, string> = {
-  dashboard: 'Dashboard', pdv: 'Ponto de Venda', entregas_pdv: 'PDV Entregas', ponto: 'Ponto Eletrônico', entregador: 'App do Entregador', mapa: 'Rastreamento de Entregas', produtos: 'Produtos', movimentacoes: 'Movimentações', compras: 'Compras Inteligentes', clientes: 'Clientes', caixa: 'Caixa', historico: 'Histórico de Vendas', abc: 'Curva ABC', qpr: 'Matriz QPR', alertas: 'Alertas', backup: 'Backup'
+  dashboard: 'Dashboard', pdv: 'Ponto de Venda', entregas_pdv: 'PDV Entregas', ponto: 'Ponto Eletrônico', entregador: 'App do Entregador', mapa: 'Rastreamento de Entregas', produtos: 'Produtos', movimentacoes: 'Movimentações', compras: 'Compras Inteligentes', clientes: 'Clientes', caixa: 'Caixa', historico: 'Histórico de Vendas', abc: 'Curva ABC', qpr: 'Matriz QPR', alertas: 'Alertas', backup: 'Backup', usuarios: 'Gerenciar Usuários'
 };
 
 // ============ SIDEBAR ============
@@ -256,7 +256,7 @@ function AppContent() {
         try {
           const remoto = await carregarTudo();
           if (remoto) hydrateFromRemote(remoto);
-        } catch (_) {}
+        } catch (error) { console.error('Falha ao carregar remoto:', error); }
       }
     });
 
@@ -266,7 +266,7 @@ function AppContent() {
         try {
           const remoto = await carregarTudo();
           if (remoto) hydrateFromRemote(remoto);
-        } catch (_) {}
+        } catch (error) { console.error('Falha ao carregar remoto:', error); }
       }
     });
 
@@ -309,6 +309,7 @@ function AppContent() {
     qpr: <Analises tipo="qpr" />,
     alertas: <Analises tipo="alertas" />,
     backup: <Analises tipo="backup" />,
+    usuarios: <UserManagement />,
   }[page];
 
   const isDark = tema === 'dark';

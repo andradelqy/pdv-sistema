@@ -94,13 +94,19 @@ function hoje() {
 // Helper de write-through: tenta sync no Supabase.
 // Em caso de falha de rede/auth, enfileira a operação no localStorage
 // para tentar novamente depois.
-function trySync(opName: string, args: any[], syncFn: (...args: any[]) => Promise<void>) {
-  syncFn(...args).catch((e: any) => {
-    console.warn(`[sync] falhou: ${opName}`, e?.message || e)
-    const queue = JSON.parse(localStorage.getItem('sync_queue') || '[]')
-    queue.push({ opName, args, timestamp: Date.now() })
-    localStorage.setItem('sync_queue', JSON.stringify(queue))
-  })
+// Helper que aguenta o formato novo (com nomes/args) ou antigo (função simples)
+function trySync(opNameOrFn: string | (() => Promise<void>), argsOrNull?: any[], syncFn?: (...args: any[]) => Promise<void>) {
+  if (typeof opNameOrFn === 'function') {
+    opNameOrFn().catch((e: any) => console.warn('[sync] falhou:', e?.message || e))
+  } else {
+    // Novo formato
+    syncFn!(...argsOrNull!).catch((e: any) => {
+      console.warn(`[sync] falhou: ${opNameOrFn}`, e?.message || e)
+      const queue = JSON.parse(localStorage.getItem('sync_queue') || '[]')
+      queue.push({ opName: opNameOrFn, args: argsOrNull, timestamp: Date.now() })
+      localStorage.setItem('sync_queue', JSON.stringify(queue))
+    })
+  }
 }
 
 export type PedidoEntrega = {
@@ -130,34 +136,36 @@ type Store = {
   caixaEntradas: EntradaCaixa[]
   caixas: Caixa[]
   caixaAberto?: Caixa
-  entregas: PedidoEntrega[]
-  tema: 'light' | 'dark'
+   entregas: PedidoEntrega[]
+   currentRole?: 'owner' | 'gerente' | 'atendente' | 'entregador'
+   tema: 'light' | 'dark'
 
-  addProduto: (p: Omit<Produto, 'id'>) => void
-  updateProduto: (p: Produto) => void
-  deleteProduto: (id: string) => void
+   addProduto: (p: Omit<Produto, 'id'>) => void
+   updateProduto: (p: Produto) => void
+   deleteProduto: (id: string) => void
 
-  addMovimentacao: (m: Omit<Movimentacao, 'id'>) => void
-  deleteMovimentacao: (id: string) => void
+   addMovimentacao: (m: Omit<Movimentacao, 'id'>) => void
+   deleteMovimentacao: (id: string) => void
 
-  addVenda: (v: Omit<Venda, 'id' | 'criadoEm'>) => void
-  addCliente: (c: Omit<Cliente, 'id'>) => void
-  updateCliente: (c: Cliente) => void
-  deleteCliente: (id: string) => void
+   addVenda: (v: Omit<Venda, 'id' | 'criadoEm'>) => void
+   addCliente: (c: Omit<Cliente, 'id'>) => void
+   updateCliente: (c: Cliente) => void
+   deleteCliente: (id: string) => void
 
-  abrirCaixa: () => void
-  fecharCaixa: () => void
-  addCaixaEntrada: (e: EntradaCaixa) => void
-  quitarFiado: (clienteId: string, valor: number, formaPagamento: string) => void
+   abrirCaixa: () => void
+   fecharCaixa: () => void
+   addCaixaEntrada: (e: EntradaCaixa) => void
+   quitarFiado: (clienteId: string, valor: number, formaPagamento: string) => void
 
-  addEntrega: (p: Omit<PedidoEntrega, 'id' | 'status' | 'criadoEm' | 'data'>) => string
-  updateStatusEntrega: (id: string, status: PedidoEntrega['status'], entregador?: { id: string; nome: string }) => void
+   addEntrega: (p: Omit<PedidoEntrega, 'id' | 'status' | 'criadoEm' | 'data'>) => string
+   updateStatusEntrega: (id: string, status: PedidoEntrega['status'], entregador?: { id: string; nome: string }) => void
 
-  toggleTema: () => void
-  resetDemo: () => void
-  clearAll: () => void
-  hydrateFromRemote: (data: sync.CargaRemota) => void
-}
+   toggleTema: () => void
+   resetDemo: () => void
+   clearAll: () => void
+   hydrateFromRemote: (data: sync.CargaRemota) => void
+   setRole: (role: any) => void
+ }
 
 const DEMO_PRODUTOS: Omit<Produto, 'id'>[] = [
   { sku: 'CER001', nome: 'Heineken 600ml', categoria: 'Cerveja', fornecedor: 'Ambev', leadTime: 3, precoCompra: 8.5, precoVenda: 14.9, imposto: 0, frete: 0, comissao: 0, margemAlvo: 30, estoque: 48, estoqueMin: 12, pontoPedido: 24, qualidade: 4 },
@@ -371,7 +379,7 @@ export const useStore = create<Store>()(
             const item = p.itens.find(i => i.produtoId === prod.id)
             if (!item) return prod
             const atualizado = { ...prod, estoque: Math.max(0, prod.estoque - item.quantidade) }
-            trySync(() => sync.upsertProduto(atualizado))
+            trySync('upsertProduto', [atualizado], sync.upsertProduto)
             return atualizado
           })
           const movimentacoes = [...s.movimentacoes, ...p.itens.map(item => ({
@@ -475,22 +483,25 @@ export const useStore = create<Store>()(
         movimentacoes: [], vendas: [], clientes: [], caixaEntradas: [], caixas: [], caixaAberto: undefined
       }),
       clearAll: () => set({ produtos: [], movimentacoes: [], vendas: [], clientes: [], caixaEntradas: [], caixas: [], caixaAberto: undefined }),
-      hydrateFromRemote: (data) => set(s => ({
-        produtos: data.produtos.length ? data.produtos : s.produtos,
-        movimentacoes: data.movimentacoes.length ? data.movimentacoes : s.movimentacoes,
-        vendas: data.vendas.length ? data.vendas : s.vendas,
-        clientes: data.clientes.length ? data.clientes : s.clientes,
-        caixaEntradas: data.caixaEntradas.length ? data.caixaEntradas : s.caixaEntradas,
-        caixas: data.caixas.length ? data.caixas : s.caixas,
-        entregas: data.entregas.length ? data.entregas : s.entregas,
-        caixaAberto: data.caixas.find(c => !c.fechadoEm) || s.caixaAberto,
-      })),
-    }),
-    { name: 'adega-pro-store' }
-  )
-)
+       hydrateFromRemote: (data) => set(s => ({
+         produtos: data.produtos.length ? data.produtos : s.produtos,
+         movimentacoes: data.movimentacoes.length ? data.movimentacoes : s.movimentacoes,
+         vendas: data.vendas.length ? data.vendas : s.vendas,
+         clientes: data.clientes.length ? data.clientes : s.clientes,
+         caixaEntradas: data.caixaEntradas.length ? data.caixaEntradas : s.caixaEntradas,
+         caixas: data.caixas.length ? data.caixas : s.caixas,
+         entregas: data.entregas.length ? data.entregas : s.entregas,
+         caixaAberto: data.caixas.find(c => !c.fechadoEm) || s.caixaAberto,
+       })),
+       setRole: (role) => set({ currentRole: role }),
+     }),
+     { name: 'adega-pro-store' }
+   )
+ )
+ 
+ export { uid, hoje }
 
-export { uid, hoje }
+
 
 export function fmtR(n: number) {
   return 'R$ ' + Number(n || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
