@@ -254,8 +254,12 @@ function AppContent() {
       setVerificandoSessao(false);
       if (data.session) {
         try {
-          const remoto = await carregarTudo();
-          if (remoto) hydrateFromRemote(remoto);
+          const { data: perfil } = await supabase.from('perfis').select('*').eq('id', data.session.user.id).single();
+          if (perfil) {
+            useStore.getState().setRole(perfil.role, perfil.loja_id);
+            const remoto = await carregarTudo(perfil.loja_id);
+            if (remoto) hydrateFromRemote(remoto);
+          }
         } catch (error) { console.error('Falha ao carregar remoto:', error); }
       }
     });
@@ -264,8 +268,12 @@ function AppContent() {
       setSession(value);
       if (value) {
         try {
-          const remoto = await carregarTudo();
-          if (remoto) hydrateFromRemote(remoto);
+          const { data: perfil } = await supabase.from('perfis').select('*').eq('id', value.user.id).single();
+          if (perfil) {
+            useStore.getState().setRole(perfil.role, perfil.loja_id);
+            const remoto = await carregarTudo(perfil.loja_id);
+            if (remoto) hydrateFromRemote(remoto);
+          }
         } catch (error) { console.error('Falha ao carregar remoto:', error); }
       }
     });

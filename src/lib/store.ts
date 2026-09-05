@@ -95,18 +95,13 @@ function hoje() {
 // Em caso de falha de rede/auth, enfileira a operação no localStorage
 // para tentar novamente depois.
 // Helper que aguenta o formato novo (com nomes/args) ou antigo (função simples)
-function trySync(opNameOrFn: string | (() => Promise<void>), argsOrNull?: any[], syncFn?: (...args: any[]) => Promise<void>) {
-  if (typeof opNameOrFn === 'function') {
-    opNameOrFn().catch((e: any) => console.warn('[sync] falhou:', e?.message || e))
-  } else {
-    // Novo formato
-    syncFn!(...argsOrNull!).catch((e: any) => {
-      console.warn(`[sync] falhou: ${opNameOrFn}`, e?.message || e)
-      const queue = JSON.parse(localStorage.getItem('sync_queue') || '[]')
-      queue.push({ opName: opNameOrFn, args: argsOrNull, timestamp: Date.now() })
-      localStorage.setItem('sync_queue', JSON.stringify(queue))
-    })
-  }
+function trySync(opName: string, args: any[], syncFn: (...args: any[]) => Promise<void>) {
+  syncFn(...args).catch((e: any) => {
+    console.warn(`[sync] falhou: ${opName}`, e?.message || e)
+    const queue = JSON.parse(localStorage.getItem('sync_queue') || '[]')
+    queue.push({ opName, args, timestamp: Date.now() })
+    localStorage.setItem('sync_queue', JSON.stringify(queue))
+  })
 }
 
 export type PedidoEntrega = {
@@ -138,6 +133,7 @@ type Store = {
   caixaAberto?: Caixa
    entregas: PedidoEntrega[]
    currentRole?: 'owner' | 'gerente' | 'atendente' | 'entregador'
+   lojaId: string
    tema: 'light' | 'dark'
 
    addProduto: (p: Omit<Produto, 'id'>) => void
@@ -164,7 +160,7 @@ type Store = {
    resetDemo: () => void
    clearAll: () => void
    hydrateFromRemote: (data: sync.CargaRemota) => void
-   setRole: (role: any) => void
+   setRole: (role: any, lojaId: string) => void
  }
 
 const DEMO_PRODUTOS: Omit<Produto, 'id'>[] = [
@@ -176,50 +172,51 @@ const DEMO_PRODUTOS: Omit<Produto, 'id'>[] = [
 ]
 
 export const useStore = create<Store>()(
-  persist(
-    (set) => ({
-      produtos: DEMO_PRODUTOS.map(p => ({ ...p, id: uid() })),
-      movimentacoes: [],
-      vendas: [],
-      clientes: [],
-      caixaEntradas: [],
-      caixas: [],
-      caixaAberto: undefined,
-      entregas: [],
-      tema: 'light',
+  persist((set) => ({
+    produtos: DEMO_PRODUTOS.map(p => ({ ...p, id: uid() })),
+    movimentacoes: [],
+    vendas: [],
+    clientes: [],
+    caixaEntradas: [],
+    caixas: [],
+    caixaAberto: undefined,
+    entregas: [],
+    tema: 'light',
+    lojaId: 'chegoudrinks',
+    currentRole: undefined,
 
       addProduto: (p) => {
         const novo: Produto = { ...p, id: uid() }
         set(s => ({ produtos: [...s.produtos, novo] }))
-        trySync('upsertProduto', [novo], sync.upsertProduto)
+        trySync('upsertProduto', [novo, useStore.getState().lojaId], sync.upsertProduto)
       },
       updateProduto: (p) => {
         set(s => ({ produtos: s.produtos.map(x => x.id === p.id ? p : x) }))
-        trySync('upsertProduto', [p], sync.upsertProduto)
+        trySync('upsertProduto', [p, useStore.getState().lojaId], sync.upsertProduto)
       },
       deleteProduto: (id) => {
         set(s => ({ produtos: s.produtos.filter(x => x.id !== id) }))
-        trySync('deleteProduto', [id], sync.deleteProduto)
+        trySync('deleteProduto', [id, useStore.getState().lojaId], sync.deleteProduto)
       },
 
-      addMovimentacao: (m) => {
-        const mov: Movimentacao = { ...m, id: uid() }
-        set(s => {
-          const prods = s.produtos.map(p => {
-            if (p.id !== m.produtoId) return p
-            const novoEst = m.tipo === 'entrada' ? p.estoque + m.quantidade : p.estoque - m.quantidade
-            const atualizado = { ...p, estoque: Math.max(0, novoEst) }
-            trySync('upsertProduto', [atualizado], sync.upsertProduto)
-            return atualizado
-          })
-          return { movimentacoes: [...s.movimentacoes, mov], produtos: prods }
+    addMovimentacao: (m) => {
+      const mov: Movimentacao = { ...m, id: uid() }
+      set(s => {
+        const prods = s.produtos.map(p => {
+          if (p.id !== m.produtoId) return p
+          const novoEst = m.tipo === 'entrada' ? p.estoque + m.quantidade : p.estoque - m.quantidade
+          const atualizado = { ...p, estoque: Math.max(0, novoEst) }
+          trySync('upsertProduto', [atualizado, useStore.getState().lojaId], sync.upsertProduto)
+          return atualizado
         })
-        trySync('insertMovimentacao', [mov], sync.insertMovimentacao)
-      },
-      deleteMovimentacao: (id) => {
-        set(s => ({ movimentacoes: s.movimentacoes.filter(x => x.id !== id) }))
-        trySync('deleteMovimentacao', [id], sync.deleteMovimentacao)
-      },
+        return { movimentacoes: [...s.movimentacoes, mov], produtos: prods }
+      })
+      trySync('insertMovimentacao', [mov, useStore.getState().lojaId], sync.insertMovimentacao)
+    },
+    deleteMovimentacao: (id) => {
+      set(s => ({ movimentacoes: s.movimentacoes.filter(x => x.id !== id) }))
+      trySync('deleteMovimentacao', [id, useStore.getState().lojaId], sync.deleteMovimentacao)
+    },
 
       addVenda: (v) => {
         const venda: Venda = { ...v, id: uid(), criadoEm: new Date().toISOString() }
@@ -280,22 +277,22 @@ export const useStore = create<Store>()(
       addCliente: (c) => {
         const novo: Cliente = { ...c, id: uid() }
         set(s => ({ clientes: [...s.clientes, novo] }))
-        trySync(() => sync.upsertCliente(novo))
+        trySync('upsertCliente', [novo, useStore.getState().lojaId], sync.upsertCliente)
       },
       updateCliente: (c) => {
         set(s => ({ clientes: s.clientes.map(x => x.id === c.id ? c : x) }))
-        trySync(() => sync.upsertCliente(c))
+        trySync('upsertCliente', [c, useStore.getState().lojaId], sync.upsertCliente)
       },
       deleteCliente: (id) => {
         set(s => ({ clientes: s.clientes.filter(x => x.id !== id) }))
-        trySync(() => sync.deleteCliente(id))
+        trySync('deleteCliente', [id, useStore.getState().lojaId], sync.deleteCliente)
       },
 
       abrirCaixa: () => {
         if (useStore.getState().caixaAberto) return
         const novo: Caixa = { id: uid(), abertoEm: new Date().toISOString() }
         set(() => ({ caixaAberto: novo }))
-        trySync(() => sync.upsertCaixa(novo))
+        trySync('upsertCaixa', [novo, useStore.getState().lojaId], sync.upsertCaixa)
       },
       fecharCaixa: () => set(s => {
         const caixaAberto = s.caixaAberto
@@ -311,14 +308,14 @@ export const useStore = create<Store>()(
           lucroLiquido: vendasCaixa.reduce((sum, v) => sum + v.total, 0) - custo,
           vendas: vendasCaixa.length,
         }
-        trySync(() => sync.upsertCaixa(caixaFechado))
+        trySync('upsertCaixa', [caixaFechado, useStore.getState().lojaId], sync.upsertCaixa)
         return { caixaAberto: undefined, caixas: [caixaFechado, ...(s.caixas || [])] }
       }),
       addCaixaEntrada: (e) => {
         if (!useStore.getState().caixaAberto) return
         const entrada = { ...e, caixaId: useStore.getState().caixaAberto!.id }
         set(s => ({ caixaEntradas: [...s.caixaEntradas, entrada] }))
-        trySync(() => sync.insertCaixaEntrada(entrada))
+        trySync('insertCaixaEntrada', [entrada, useStore.getState().lojaId], sync.insertCaixaEntrada)
       },
 
       quitarFiado: (clienteId, valor, formaPagamento) => set(s => {
@@ -353,9 +350,9 @@ export const useStore = create<Store>()(
         }
 
         // Write-through
-        trySync(() => sync.upsertCliente({ ...cliente, saldo: novoSaldo }))
-        trySync(() => sync.insertCaixaEntrada(entradaCaixa))
-        trySync(() => sync.insertVenda(novaVendaQuitada, []))
+        trySync('upsertCliente', [{ ...cliente, saldo: novoSaldo }, useStore.getState().lojaId], sync.upsertCliente)
+        trySync('insertCaixaEntrada', [entradaCaixa, useStore.getState().lojaId], sync.insertCaixaEntrada)
+        trySync('insertVenda', [novaVendaQuitada, [], useStore.getState().lojaId], sync.insertVenda)
 
         return {
           clientes: clientesAtualizados,
@@ -391,13 +388,13 @@ export const useStore = create<Store>()(
             obs: `Pedido Entrega #${id.slice(-4)} (${p.clienteNome})`,
           }))]
           // Write-through
-          trySync(() => sync.upsertEntrega(novaEntrega))
+          trySync('upsertEntrega', [novaEntrega, useStore.getState().lojaId], sync.upsertEntrega)
           p.itens.forEach(item => {
-            trySync(() => sync.insertMovimentacao({
+            trySync('insertMovimentacao', [{
               id: uid(), produtoId: item.produtoId, tipo: 'saida',
               quantidade: item.quantidade, data: hoje(),
               obs: `Pedido Entrega #${id.slice(-4)} (${p.clienteNome})`,
-            }))
+            }, useStore.getState().lojaId], sync.insertMovimentacao)
           })
           return {
             entregas: [novaEntrega, ...s.entregas],
@@ -464,12 +461,12 @@ export const useStore = create<Store>()(
           }
         })
 
-        if (entregaAtualizada) trySync(() => sync.upsertEntrega(entregaAtualizada as PedidoEntrega))
+        if (entregaAtualizada) trySync('upsertEntrega', [entregaAtualizada as PedidoEntrega, useStore.getState().lojaId], sync.upsertEntrega)
         if (novaVendaGerada) {
           const venda = novaVendaGerada as Venda
-          trySync(() => sync.insertVenda(venda, venda.itens))
+          trySync('insertVenda', [venda, venda.itens, useStore.getState().lojaId], sync.insertVenda)
         }
-        if (entradaCaixaGerada) trySync(() => sync.insertCaixaEntrada(entradaCaixaGerada as EntradaCaixa))
+        if (entradaCaixaGerada) trySync('insertCaixaEntrada', [entradaCaixaGerada as EntradaCaixa, useStore.getState().lojaId], sync.insertCaixaEntrada)
       },
 
       toggleTema: () => set(s => {
