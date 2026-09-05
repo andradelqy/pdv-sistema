@@ -10,17 +10,14 @@ export function toast(msg: string, type: ToastType = 'success') {
   _add?.({ id: Date.now(), msg, type })
 }
 
-// Suporte para custom toast (ex: usado no card de novo pedido)
+// Suporte para custom toast
 toast.custom = (render: ReactNode, opts?: { duration?: number }) => {
   const id = Date.now()
   _add?.({ id, render })
-  if (opts?.duration) setTimeout(() => toast.dismiss(id), opts.duration)
+  if (opts?.duration) setTimeout(() => toast.dismiss(), opts.duration)
 }
 
-toast.dismiss = (id: number) => {
-  // lógica de remoção interna seria necessária se quisermos dismissing robusto,
-  // mas aqui simplificamos para o card
-}
+toast.dismiss = () => {}
 
 export function ToastProvider() {
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -48,5 +45,3 @@ export function ToastProvider() {
     </div>
   )
 }
-
-
