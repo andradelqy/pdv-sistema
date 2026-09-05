@@ -7,12 +7,20 @@ export function Movimentacoes() {
   const { produtos, movimentacoes, addMovimentacao, deleteMovimentacao } = useStore()
   const [modal, setModal] = useState(false)
   const [produtoId, setProdutoId] = useState('')
+  const [search, setSearch] = useState('')
+  const [showDropdown, setShowDropdown] = useState(false)
   const [tipo, setTipo] = useState<'entrada' | 'saida'>('entrada')
   const [quantidade, setQuantidade] = useState(1)
   const [data, setData] = useState(hoje())
   const [lote, setLote] = useState('')
   const [validade, setValidade] = useState('')
   const [obs, setObs] = useState('')
+
+  const filteredProds = produtos.filter(p => 
+    p.nome.toLowerCase().includes(search.toLowerCase()) ||
+    p.sku.toLowerCase().includes(search.toLowerCase())
+  )
+
   const [filterProd, setFilterProd] = useState('')
   const [filterTipo, setFilterTipo] = useState('')
   const [filterFrom, setFilterFrom] = useState('')
@@ -41,7 +49,7 @@ export function Movimentacoes() {
     addMovimentacao({ produtoId, tipo, quantidade, data, lote, validade, obs })
     toast(`${tipo === 'entrada' ? 'Entrada' : 'Saída'} registrada`)
     setModal(false)
-    setProdutoId(''); setQuantidade(1); setLote(''); setValidade(''); setObs('')
+    setProdutoId(''); setSearch(''); setQuantidade(1); setLote(''); setValidade(''); setObs('')
   }
 
   function remover(id: string) {
@@ -122,10 +130,30 @@ export function Movimentacoes() {
             <div className="flex flex-col gap-3 text-sm">
               <div>
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Produto *</label>
-                <select className="w-full p-2 border border-border rounded-lg bg-background" value={produtoId} onChange={e => setProdutoId(e.target.value)}>
-                  <option value="">Selecione...</option>
-                  {produtos.map(p => <option key={p.id} value={p.id}>[{p.sku}] {p.nome} (est: {p.estoque})</option>)}
-                </select>
+                <div className="relative">
+                  <input 
+                    type="text" 
+                    className="w-full p-2 border border-border rounded-lg bg-background" 
+                    placeholder="Digite nome ou SKU..." 
+                    value={search} 
+                    onChange={e => { setSearch(e.target.value); setShowDropdown(true); if(!e.target.value) setProdutoId('') }}
+                    onFocus={() => setShowDropdown(true)}
+                  />
+                  {showDropdown && search && (
+                    <div className="absolute z-10 w-full bg-background border border-border rounded-lg mt-1 max-h-40 overflow-y-auto shadow-lg">
+                      {filteredProds.map(p => (
+                        <div 
+                          key={p.id} 
+                          className="p-2 hover:bg-muted cursor-pointer"
+                          onClick={() => { setProdutoId(p.id); setSearch(`[${p.sku}] ${p.nome}`); setShowDropdown(false) }}
+                        >
+                          [{p.sku}] {p.nome} (Estoque: {p.estoque})
+                        </div>
+                      ))}
+                      {filteredProds.length === 0 && <div className="p-2 text-muted-foreground">Produto não encontrado</div>}
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>

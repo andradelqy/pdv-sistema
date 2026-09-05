@@ -75,7 +75,7 @@ export function EntregasPDV() {
     }, 0)
   }, [carrinho, produtos])
 
-  // Geocodificação (mantido)
+  // Geocodificação (RESTRITA A SÃO PAULO)
   useEffect(() => {
     if (!endereco || endereco.trim().length < 4) {
       setDistanciaKm(2.0)
@@ -84,33 +84,39 @@ export function EntregasPDV() {
     const timer = setTimeout(async () => {
       setCalculandoFrete(true)
       try {
+        // Busca forçando contexto de São Paulo (Estado) e país Brasil
+        const query = encodeURIComponent(`${endereco}, SP, Brazil`)
         const res = await fetch(
-          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(endereco)}&limit=1`,
+          `https://nominatim.openstreetmap.org/search?format=json&q=${query}&countrycodes=br&limit=1`,
           { headers: { 'User-Agent': 'pdv-sistema-entrega-app' } }
         )
         const data = await res.json()
-        if (data && data.length > 0) {
+
+        // Verifica se encontrou e se é no estado de São Paulo
+        if (data && data.length > 0 && (data[0].display_name.includes("São Paulo") || data[0].display_name.includes("SP"))) {
           const latDest = parseFloat(data[0].lat)
           const lonDest = parseFloat(data[0].lon)
-          const latLoja = -23.4545
-          const lonLoja = -46.5341
+
+          // Coordenadas atualizadas para Av. Alberto Byington, 631
+          const latLoja = -23.5031
+          const lonLoja = -46.5824
+
           const R = 6371
           const dLat = ((latDest - latLoja) * Math.PI) / 180
           const dLon = ((lonDest - lonLoja) * Math.PI) / 180
-          const a =
-            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos((latLoja * Math.PI) / 180) *
-              Math.cos((latDest * Math.PI) / 180) *
-              Math.sin(dLon / 2) *
-              Math.sin(dLon / 2)
+          const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                    Math.cos((latLoja * Math.PI) / 180) * Math.cos((latDest * Math.PI) / 180) *
+                    Math.sin(dLon / 2) * Math.sin(dLon / 2)
           const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+          // Multiplicador 1.35 para rota de rua (aproximação)
           const kmReal = Math.max(1, R * c * 1.35)
           setDistanciaKm(parseFloat(kmReal.toFixed(1)))
         } else {
-          const kmEstimado = Math.min(12, Math.max(2, (endereco.length % 7) + 1.5))
-          setDistanciaKm(parseFloat(kmEstimado.toFixed(1)))
+          toast('O endereço não foi encontrado ou está fora de São Paulo.', 'warning')
+          setDistanciaKm(2.0)
         }
       } catch (_) {
+        toast('Erro ao buscar endereço.', 'danger')
         setDistanciaKm(2.5)
       } finally {
         setCalculandoFrete(false)
