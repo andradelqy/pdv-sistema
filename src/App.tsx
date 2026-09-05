@@ -309,7 +309,6 @@ function AppContent() {
     qpr: <Analises tipo="qpr" />,
     alertas: <Analises tipo="alertas" />,
     backup: <Analises tipo="backup" />,
-    usuarios: <UserManagement />,
   }[page];
 
   const isDark = tema === 'dark';
