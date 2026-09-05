@@ -11,6 +11,7 @@ import { carregarTudo } from './lib/sync';
 import { ToastProvider } from './lib/toast';
 import { Login } from './Login';
 import { Dashboard } from './pages/Dashboard';
+// UserManagement removido
 import { PDV } from './pages/PDV';
 import { EntregasPDV } from './pages/EntregasPDV';
 import { Produtos } from './pages/Produtos';
@@ -21,7 +22,6 @@ import { Analises } from './pages/Analises';
 import { PontoEletronico } from './PontoEletronico';
 import { AppEntregador } from './AppEntregador';
 import { PainelMapa } from './PainelMapa';
-import { UserManagement } from './components/UserManagement';
 import { Termos } from './pages/Termos';
 import { Privacidade } from './pages/Privacidade';
 
