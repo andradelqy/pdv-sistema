@@ -25,7 +25,7 @@ import { PainelMapa } from './PainelMapa';
 import { Termos } from './pages/Termos';
 import { Privacidade } from './pages/Privacidade';
 
-type Page = 'dashboard' | 'pdv' | 'entregas_pdv' | 'ponto' | 'entregador' | 'mapa' | 'produtos' | 'movimentacoes' | 'compras' | 'clientes' | 'caixa' | 'historico' | 'abc' | 'qpr' | 'alertas' | 'backup' | 'usuarios';
+type Page = 'dashboard' | 'pdv' | 'entregas_pdv' | 'ponto' | 'entregador' | 'mapa' | 'produtos' | 'movimentacoes' | 'compras' | 'clientes' | 'caixa' | 'historico' | 'abc' | 'qpr' | 'alertas' | 'backup';
 
 const nav: { group: string; items: { page: Page; label: string; icon: typeof Gauge }[] }[] = [
   { group: 'Visão Geral', items: [{ page: 'dashboard', label: 'Dashboard', icon: Gauge }] },
@@ -35,11 +35,11 @@ const nav: { group: string; items: { page: Page; label: string; icon: typeof Gau
   { group: 'Entregas', items: [{ page: 'entregador', label: 'App Entregador', icon: Truck }, { page: 'mapa', label: 'Rastreamento', icon: MapPinned }] },
   { group: 'Financeiro', items: [{ page: 'caixa', label: 'Caixa', icon: Wallet }] },
   { group: 'Análise', items: [{ page: 'abc', label: 'Curva ABC', icon: BarChart3 }, { page: 'qpr', label: 'Matriz QPR', icon: ChartNoAxesCombined }, { page: 'alertas', label: 'Alertas', icon: Bell }] },
-  { group: 'Sistema', items: [{ page: 'backup', label: 'Backup', icon: Database }, { page: 'usuarios', label: 'Usuários', icon: Users }] },
+  { group: 'Sistema', items: [{ page: 'backup', label: 'Backup', icon: Database }] },
 ];
 
 const titles: Record<Page, string> = {
-  dashboard: 'Dashboard', pdv: 'Ponto de Venda', entregas_pdv: 'PDV Entregas', ponto: 'Ponto Eletrônico', entregador: 'App do Entregador', mapa: 'Rastreamento de Entregas', produtos: 'Produtos', movimentacoes: 'Movimentações', compras: 'Compras Inteligentes', clientes: 'Clientes', caixa: 'Caixa', historico: 'Histórico de Vendas', abc: 'Curva ABC', qpr: 'Matriz QPR', alertas: 'Alertas', backup: 'Backup', usuarios: 'Gerenciar Usuários'
+  dashboard: 'Dashboard', pdv: 'Ponto de Venda', entregas_pdv: 'PDV Entregas', ponto: 'Ponto Eletrônico', entregador: 'App do Entregador', mapa: 'Rastreamento de Entregas', produtos: 'Produtos', movimentacoes: 'Movimentações', compras: 'Compras', clientes: 'Clientes', caixa: 'Caixa', historico: 'Histórico de Vendas', abc: 'Curva ABC', qpr: 'Matriz QPR', alertas: 'Alertas', backup: 'Backup'
 };
 
 // ============ SIDEBAR ============

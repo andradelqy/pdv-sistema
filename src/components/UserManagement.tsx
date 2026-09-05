@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { toast } from '../lib/toast';
-import { Mail, Plus, User, Trash2 } from 'lucide-react';
+import { Mail, User, Trash2 } from 'lucide-react';
 
 export function UserManagement() {
   const [users, setUsers] = useState<any[]>([]);
