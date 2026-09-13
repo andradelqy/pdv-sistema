@@ -123,15 +123,25 @@ export type PedidoEntrega = {
   lng?: number
 }
 
+export type PedidoCompra = {
+  id: string
+  fornecedorId: string
+  status: 'draft' | 'pending' | 'in_transit' | 'received' | 'cancelled'
+  itens: { produtoId: string, quantidade: number, precoCusto: number }[]
+  dataPedido: string
+  lojaId: string
+}
+
 type Store = {
   produtos: Produto[]
   movimentacoes: Movimentacao[]
   vendas: Venda[]
   clientes: Cliente[]
-  caixaEntradas: EntradaCaixa[]
-  caixas: Caixa[]
-  caixaAberto?: Caixa
+   caixaEntradas: EntradaCaixa[]
+   caixas: Caixa[]
+   caixaAberto?: Caixa
    entregas: PedidoEntrega[]
+   pedidosCompra: PedidoCompra[]
    currentRole?: 'owner' | 'gerente' | 'atendente' | 'entregador'
    lojaId: string
    tema: 'light' | 'dark'
@@ -154,9 +164,12 @@ type Store = {
    quitarFiado: (clienteId: string, valor: number, formaPagamento: string) => void
 
    addEntrega: (p: Omit<PedidoEntrega, 'id' | 'status' | 'criadoEm' | 'data'>) => string
-   updateStatusEntrega: (id: string, status: PedidoEntrega['status'], entregador?: { id: string; nome: string }) => void
-
-   toggleTema: () => void
+    updateStatusEntrega: (id: string, status: PedidoEntrega['status'], entregador?: { id: string; nome: string }) => void
+    
+    addPedidoCompra: (p: PedidoCompra) => void
+    receberPedidoCompra: (id: string) => void
+ 
+    toggleTema: () => void
    resetDemo: () => void
    clearAll: () => void
    hydrateFromRemote: (data: sync.CargaRemota) => void
@@ -181,6 +194,7 @@ export const useStore = create<Store>()(
     caixas: [],
     caixaAberto: undefined,
     entregas: [],
+    pedidosCompra: [],
     tema: 'light',
     lojaId: 'chegoudrinks',
     currentRole: undefined,
@@ -491,6 +505,21 @@ export const useStore = create<Store>()(
          caixaAberto: data.caixas.find(c => !c.fechadoEm) || s.caixaAberto,
        })),
        setRole: (role) => set({ currentRole: role }),
+       
+       addPedidoCompra: (p) => set(s => ({ pedidosCompra: [...s.pedidosCompra, p] })),
+       receberPedidoCompra: (id) => set(s => {
+         const pedido = s.pedidosCompra.find(p => p.id === id)
+         if (!pedido || pedido.status === 'received') return s
+         const prods = s.produtos.map(p => {
+           const item = pedido.itens.find(i => i.produtoId === p.id)
+           if (!item) return p
+           return { ...p, estoque: p.estoque + item.quantidade }
+         })
+         return { 
+           pedidosCompra: s.pedidosCompra.map(p => p.id === id ? {...p, status: 'received'} : p),
+           produtos: prods
+         }
+       }),
      }),
      { name: 'adega-pro-store' }
    )

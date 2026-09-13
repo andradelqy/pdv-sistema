@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
-import { useStore, fmtR, margemLiquida, calcularEstoqueMinimoRecomendado, type Produto } from '../lib/store'
+import { useStore, fmtR, margemLiquida, type Produto } from '../lib/store'
+import { sugerirEstoqueMinimo } from '../lib/purchasing/safetyStock'
 import { toast } from '../lib/toast'
 import { Plus, Pencil, Trash2, Search, Sparkles, Wand2 } from 'lucide-react'
 
@@ -10,7 +11,7 @@ const EMPTY: Omit<Produto, 'id'> = {
 }
 
 export function Produtos() {
-  const { produtos, movimentacoes, addProduto, updateProduto, deleteProduto } = useStore()
+  const { produtos, vendas, pedidosCompra, movimentacoes, addProduto, updateProduto, deleteProduto } = useStore()
   const [busca, setBusca] = useState('')
   const [filterCat, setFilterCat] = useState('')
   const [modal, setModal] = useState(false)
@@ -19,30 +20,30 @@ export function Produtos() {
   const [page, setPage] = useState(1)
   const perPage = 20
 
-  // Mapa de estoque mínimo inteligente sugerido para cada produto
+// Mapa de estoque mínimo inteligente sugerido para cada produto
   const estoquesSugeridos = useMemo(() => {
     const mapa: Record<string, number> = {}
     produtos.forEach(p => {
-      mapa[p.id] = calcularEstoqueMinimoRecomendado(p, movimentacoes)
+      mapa[p.id] = sugerirEstoqueMinimo(p, vendas, pedidosCompra)
     })
     return mapa
-  }, [produtos, movimentacoes])
+  }, [produtos, vendas, pedidosCompra])
 
   // Aplica a sugestão inteligente em lote para todos os produtos
   function aplicarMinimoInteligenteLote() {
     let alterados = 0
     produtos.forEach(p => {
-      const sugerido = calcularEstoqueMinimoRecomendado(p, movimentacoes)
+      const sugerido = sugerirEstoqueMinimo(p, vendas, pedidosCompra)
       if (p.estoqueMin !== sugerido) {
         updateProduto({
           ...p,
           estoqueMin: sugerido,
-          pontoPedido: Math.max(sugerido + 2, Math.ceil(sugerido * 1.5)),
+          pontoPedido: Math.max(sugerido + 2, Math.ceil(sugerido * 1.5))
         })
         alterados++
       }
     })
-    toast(`Estoque mínimo ajustado para ${alterados} produto(s) com base no giro!`, 'success')
+    toast(`${alterados} produtos tiveram estoque mínimo atualizados pela IA`, 'success')
   }
 
   const cats = [...new Set(produtos.map(p => p.categoria).filter(Boolean))]
@@ -63,14 +64,9 @@ export function Produtos() {
   }
 
   function aplicarSugeridoNoForm() {
-    const pTemp = { ...(form as Produto), id: editId || 'temp' }
-    const sugerido = calcularEstoqueMinimoRecomendado(pTemp, movimentacoes)
-    setForm(f => ({
-      ...f,
-      estoqueMin: sugerido,
-      pontoPedido: Math.max(sugerido + 2, Math.ceil(sugerido * 1.5)),
-    }))
-    toast(`Mínimo sugerido de ${sugerido} un aplicado!`)
+    if (editId && estoquesSugeridos[editId]) {
+      setForm({ ...form, estoqueMin: estoquesSugeridos[editId] })
+    }
   }
 
   function salvar() {
@@ -81,19 +77,24 @@ export function Produtos() {
     if (f.precoVenda < f.precoCompra) {
       toast('Preço de venda menor que custo', 'warning'); return
     }
-    // Garantir que imposto, frete e comissão fiquem zerados
+    
+    // Calcula sugerido ao salvar
+    const sugerido = sugerirEstoqueMinimo(f, vendas, pedidosCompra)
+    
     const produtoSalvo = {
       ...f,
+      estoqueMin: f.estoqueMin || sugerido,
+      pontoPedido: f.pontoPedido || Math.max(sugerido + 2, Math.ceil(sugerido * 1.5)),
       imposto: 0,
       frete: 0,
       comissao: 0,
     }
-    if (editId) { 
-      updateProduto({ ...produtoSalvo, id: editId }); 
-      toast('Produto atualizado') 
-    } else { 
-      addProduto(produtoSalvo as Omit<Produto, 'id'>); 
-      toast('Produto cadastrado') 
+    if (editId) {
+      updateProduto({ ...produtoSalvo, id: editId });
+      toast('Produto atualizado')
+    } else {
+      addProduto(produtoSalvo as Omit<Produto, 'id'>);
+      toast('Produto cadastrado')
     }
     setModal(false)
   }
@@ -214,14 +215,14 @@ export function Produtos() {
 
             <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-400">
-                <Sparkles size={16} className="text-amber-500 shrink-0" />
-                <span>
-                  Sugerido pelo giro:{' '}
-                  <strong>
-                    {calcularEstoqueMinimoRecomendado({ ...(form as Produto), id: editId || 'temp' }, movimentacoes)} un
-                  </strong>
-                </span>
-              </div>
+                 <Sparkles size={16} className="text-amber-500 shrink-0" />
+                 <span>
+                   Sugerido pelo giro:{' '}
+                   <strong>
+                     {sugerirEstoqueMinimo({ ...(form as Produto), id: editId || 'temp' }, vendas, pedidosCompra)} un
+                   </strong>
+                 </span>
+               </div>
               <button
                 type="button"
                 onClick={aplicarSugeridoNoForm}

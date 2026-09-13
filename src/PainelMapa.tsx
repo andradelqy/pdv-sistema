@@ -1,4 +1,3 @@
-// src/PainelMapa.tsx
 import { useEffect, useState } from 'react'
 import { MapContainer, TileLayer, Marker, Polyline } from 'react-leaflet'
 import L from 'leaflet'
@@ -6,7 +5,7 @@ import { supabase } from './lib/supabase'
 import 'leaflet/dist/leaflet.css'
 
 const motoIcon = L.divIcon({
-  html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-8 h-8 text-amber-500"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>`,
+  html: `<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2" class="text-amber-500"><circle cx="12" cy="12" r="10"/></svg>`,
   className: '', iconSize: [32, 32], iconAnchor: [16, 32],
 })
 

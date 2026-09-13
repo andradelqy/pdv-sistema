@@ -14,10 +14,10 @@ export function toast(msg: string, type: ToastType = 'success') {
 toast.custom = (render: ReactNode, opts?: { duration?: number }) => {
   const id = Date.now()
   _add?.({ id, render })
-  if (opts?.duration) setTimeout(() => toast.dismiss(), opts.duration)
+  if (opts?.duration) setTimeout(() => toast.dismiss(0), opts.duration)
 }
 
-toast.dismiss = () => {}
+toast.dismiss = (_id: number) => {}
 
 export function ToastProvider() {
   const [toasts, setToasts] = useState<Toast[]>([])
