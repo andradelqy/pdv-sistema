@@ -36,7 +36,7 @@ function otimizarPlano(decisoes: InventoryEngineResult[], produtos: Produto[], o
 }
 
 export function Compras() {
-  const { produtos, vendas, addPedidoCompra } = useStore()
+  const { produtos, vendas, pedidosCompra, addPedidoCompra } = useStore()
   const [orcamento, setOrcamento] = useState<number>(5000)
   const [decisoes, setDecisoes] = useState<InventoryEngineResult[]>([])
   const [modo, setModo] = useState<'recommendation' | 'controlled' | 'autonomous'>('recommendation')
@@ -128,6 +128,9 @@ export function Compras() {
             {decisoes.map(d => {
                 const p = produtos.find(x => x.id === d.productId)
                 const itemPlanejado = plano.find(item => item.produtoId === d.productId)
+                const emTransito = pedidosCompra
+                  .filter(pedido => pedido.status === 'pending' || pedido.status === 'in_transit')
+                  .reduce((soma, pedido) => soma + (pedido.itens.find(item => item.produtoId === d.productId)?.quantidade ?? 0), 0)
                 if (!p) return null
                 return (
                     <motion.div variants={itemVariants} key={d.productId} className="p-4 border rounded-xl bg-white shadow-sm flex flex-col gap-2">
@@ -135,7 +138,13 @@ export function Compras() {
                             <span className="font-bold text-lg">{p.nome}</span>
                             <span className={`px-2 py-1 rounded text-xs font-bold`}>{d.recommendation}</span>
                         </div>
-                        <p className="text-sm font-semibold">Necessidade: {d.recommendedPurchaseQty} un. {itemPlanejado ? `Plano dentro do orçamento: ${itemPlanejado.quantidade} un.` : 'Fora do plano por orçamento, confiança ou custo.'}</p>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-slate-600">
+                          <span>Estoque atual: <strong>{p.estoque} un.</strong></span>
+                          <span>Em reposição: <strong>{emTransito} un.</strong></span>
+                          <span>Ponto de pedido: <strong>{d.reorderPoint} un.</strong></span>
+                          <span>Estoque alvo: <strong>{d.maximumStock} un.</strong></span>
+                        </div>
+                        <p className="text-sm font-semibold">Compra necessária: {d.recommendedPurchaseQty} un. {itemPlanejado ? `Plano dentro do orçamento: ${itemPlanejado.quantidade} un.` : 'Fora do plano por orçamento, confiança ou custo.'}</p>
                         <p className="text-xs text-muted-foreground">{d.reasons.join(' | ')}</p>
                         <div className="text-[10px] text-slate-400 font-mono mt-2">Score Importância: {d.automaticImportanceScore} | Confiança: {d.confidenceScore}%</div>
                     </motion.div>

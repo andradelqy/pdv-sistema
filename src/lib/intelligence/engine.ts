@@ -322,7 +322,8 @@ function analisarFornecedor(
   ).length;
 
   const inTransit = pedidosProduto
-    .filter(pedido => pedido.status === 'in_transit')
+    // Pedidos aprovados (pending) já comprometem reposição e não podem gerar compra duplicada.
+    .filter(pedido => pedido.status === 'pending' || pedido.status === 'in_transit')
     .reduce((sum, pedido) => {
       const item = pedido.itens.find(
         item => item.produtoId === produto.id

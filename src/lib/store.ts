@@ -182,6 +182,7 @@ type Store = {
     updateStatusEntrega: (id: string, status: PedidoEntrega['status'], entregador?: { id: string; nome: string }) => void
     
     addPedidoCompra: (p: PedidoCompra) => void
+    atualizarStatusPedidoCompra: (id: string, status: PedidoCompra['status']) => void
     receberPedidoCompra: (id: string) => void
  
     toggleTema: () => void
@@ -525,11 +526,21 @@ export const useStore = create<Store>()(
          set(s => ({ pedidosCompra: [...s.pedidosCompra, p] }))
          trySync('upsertPedidoCompra', [p, useStore.getState().lojaId], sync.upsertPedidoCompra)
        },
+       atualizarStatusPedidoCompra: (id, status) => {
+         let atualizado: PedidoCompra | undefined
+         set(s => {
+           const pedido = s.pedidosCompra.find(p => p.id === id)
+           if (!pedido || pedido.status === 'received' || pedido.status === 'cancelled') return s
+           atualizado = { ...pedido, status }
+           return { pedidosCompra: s.pedidosCompra.map(p => p.id === id ? atualizado! : p) }
+         })
+         if (atualizado) trySync('upsertPedidoCompra', [atualizado, useStore.getState().lojaId], sync.upsertPedidoCompra)
+       },
        receberPedidoCompra: (id) => {
          let recebido: PedidoCompra | undefined
          set(s => {
            const pedido = s.pedidosCompra.find(p => p.id === id)
-           if (!pedido || pedido.status === 'received') return s
+           if (!pedido || pedido.status === 'received' || pedido.status === 'cancelled' || pedido.status === 'draft') return s
            recebido = { ...pedido, status: 'received', recebidoEm: new Date().toISOString() }
            const produtosComEstoque = s.produtos.map(p => {
              const item = pedido.itens.find(i => i.produtoId === p.id)
