@@ -14,6 +14,10 @@ alter table public.entregas add column if not exists loja_id text;
 alter table public.produtos add column if not exists automatic_quality_score numeric;
 alter table public.produtos add column if not exists automatic_quality_level integer;
 alter table public.produtos add column if not exists confidence_score numeric;
+alter table public.produtos add column if not exists produto_estoque_origem_id text references public.produtos(id);
+alter table public.produtos add column if not exists unidades_por_estoque_origem numeric;
+alter table public.produtos alter column estoque type numeric using estoque::numeric;
+alter table public.movimentacoes alter column quantidade type numeric using quantidade::numeric;
 alter table public.entregas add column if not exists lat numeric;
 alter table public.entregas add column if not exists lng numeric;
 

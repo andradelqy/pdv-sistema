@@ -246,8 +246,15 @@ function limitarOutlier(
     return serie;
   }
 
+  // Dias sem venda não são outliers. Incluí-los no percentil fazia o P90 virar
+  // zero em produtos de venda intermitente e apagava toda a previsão.
+  const valoresPositivos = serie.filter(value => value > 0);
+  if (!valoresPositivos.length) {
+    return serie;
+  }
+
   const valoresOrdenados =
-    [...serie].sort(
+    valoresPositivos.sort(
       (a, b) => a - b
     );
 

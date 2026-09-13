@@ -10,13 +10,14 @@ Principais recursos:
 
 - Login com Supabase Auth
 - Dashboard com indicadores de vendas, estoque e lucro líquido
-- PDV com carrinho, desconto, múltiplas formas de pagamento e fiado
+- PDV com carrinho, desconto, múltiplas formas de pagamento com valor final preenchido automaticamente e fiado
 - Controle de caixa com abertura e fechamento
 - Histórico de caixas fechados
-- Controle de produtos e estoque
+- Estoque mínimo e ponto de pedido calculados automaticamente
+- Composição de estoque para itens derivados, como doses consumindo garrafas
 - Movimentações de entrada e saída
 - Clientes com limite/saldo de fiado
-- Compras inteligentes e reposição de estoque
+- Compras inteligentes com previsão de demanda, orçamento, fornecedor, aprovação e cancelamento de pedidos
 - Entregas com status e rastreamento
 - Backup local em JSON
 - Migração manual dos dados do navegador para o Supabase
@@ -43,6 +44,7 @@ src/
     store.ts               # Store global Zustand + persistência local + sync Supabase
     supabase.ts            # Cliente Supabase
     sync.ts                # Conversão LS <-> Supabase e funções de sincronização
+    intelligence/          # Previsão de demanda, importância e política de reposição
     dateBR.ts              # Datas em America/Sao_Paulo
     lucro.ts               # Cálculo único de lucro líquido
     toast.tsx              # Sistema de notificações
@@ -57,6 +59,7 @@ src/
     Analises.tsx           # Caixa, histórico, ABC, backup e alertas
 supabase/
   schema.sql               # Schema recomendado para recriar as tabelas no Supabase
+  migrations/              # Atualizações incrementais para instalações existentes
 ```
 
 ## Instalação
@@ -98,7 +101,7 @@ npm run build
 Para checagem TypeScript sem gerar build:
 
 ```bash
-npx tsc -b --noEmit
+npx tsc -b
 ```
 
 Para lint:
@@ -138,7 +141,7 @@ Ele cria/recria:
 - `caixa_entradas`
 - `entregas`
 
-Também ativa RLS e cria políticas para que cada usuário acesse apenas os próprios dados por `user_id`.
+Também ativa RLS. Para instalações com equipe/loja compartilhada, a migração abaixo substitui a política individual por acesso controlado via `loja_id` e perfil do usuário.
 
 Para aplicar:
 
@@ -148,6 +151,16 @@ Para aplicar:
 4. Execute o script.
 
 Atenção: o script recria tabelas e remove estruturas antigas como `vw_curva_abc` e `alertas_compra`. Faça backup se houver dados importantes no Supabase antes de rodar.
+
+### Atualização para loja compartilhada, compras e composição de estoque
+
+Para uma instalação já existente, aplique também a migração:
+
+```txt
+supabase/migrations/20260913_multitenant_sync.sql
+```
+
+Ela adiciona `loja_id` às tabelas operacionais, cria `pedidos_compra` e `itens_pedido_compra`, permite RLS por loja e inclui os campos necessários para composição de estoque. Execute-a pelo SQL Editor ou Supabase CLI antes de publicar esta versão.
 
 ## Migração do localStorage para Supabase
 
@@ -186,8 +199,8 @@ Fluxo atual:
 1. A store Zustand continua persistindo no `localStorage`.
 2. As ações principais disparam uma sincronização em background com Supabase.
 3. Ao carregar o app logado, ele tenta buscar dados do Supabase.
-4. Se o Supabase tiver dados, eles hidratam a store local.
-5. Se o Supabase estiver vazio ou offline, o app continua usando o `localStorage`.
+4. Os produtos, movimentações, vendas, clientes, caixas, entradas, entregas e pedidos de compra hidratam a store local.
+5. Se o Supabase estiver offline, o app continua usando o `localStorage` e processa a fila de sincronização quando a conexão voltar.
 
 Arquivos envolvidos:
 
@@ -271,6 +284,8 @@ O PDV permite:
 - Registrar devolução
 - Emitir cupom via impressão do navegador
 
+O primeiro pagamento acompanha automaticamente o total do pedido, inclusive após desconto. Ao editar o valor ou dividir o pagamento em mais de uma forma, o operador assume o controle do rateio.
+
 Atalhos:
 
 - `F2`: finalizar venda
@@ -301,6 +316,33 @@ Cada produto possui informações como:
 - Imagem
 
 Movimentações de estoque atualizam o saldo do produto e são sincronizadas com Supabase.
+
+### Estoque automático e composição
+
+O sistema recalcula estoque mínimo e ponto de pedido após vendas, entregas, movimentações e recebimentos de compra. O cálculo considera demanda, giro, variabilidade e lead time.
+
+Produtos derivados podem consumir o estoque de um produto físico. Exemplo para uma adega:
+
+1. Cadastre a garrafa como produto com estoque próprio.
+2. Crie ou edite a dose.
+3. Em **Composição de estoque**, vincule a dose à garrafa e informe o rendimento, por exemplo, `10` doses por garrafa.
+
+Cada dose vendida reduz `1/10` da garrafa. As vendas de doses também entram na demanda da garrafa; por isso, o motor recomenda comprar a garrafa, e não a dose.
+
+## Compras inteligentes
+
+A tela de Compras calcula reposição somente para produtos físicos. Ela apresenta estoque atual, unidades já em reposição, ponto de pedido, estoque alvo e quantidade necessária.
+
+O plano prioriza risco de ruptura, importância, confiança da previsão e margem, respeita o orçamento disponível e separa pedidos por fornecedor.
+
+Fluxo de pedidos:
+
+- **Recomendação:** mostra o plano, sem criar pedidos.
+- **Controlado:** cria pedidos em rascunho para aprovação.
+- **Autônomo:** cria pedidos internos pendentes somente para itens críticos e com confiança alta; não envia pedidos a fornecedores externos.
+- Pedidos em rascunho podem ser aprovados ou cancelados.
+- Pedidos aprovados contam como estoque em reposição, evitando compra duplicada.
+- Somente pedidos aprovados/em trânsito podem ser recebidos; o recebimento atualiza o estoque e o lead time histórico.
 
 ## Clientes e fiado
 
@@ -369,9 +411,8 @@ Implementado:
 
 Pontos que podem ser melhorados futuramente:
 
-- Fila offline robusta para sincronizar automaticamente alterações feitas sem internet
 - Tela de status de sincronização
 - Controle de conflitos entre dispositivos
 - Auditoria de operações financeiras
 - Relatórios avançados diretamente por queries SQL/views
-- Separação de permissões por perfil/funcionário
+- Integrações autorizadas com catálogos e pedidos de fornecedores externos

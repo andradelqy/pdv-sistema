@@ -8,12 +8,26 @@ import { PurchasingDashboard } from '../components/PurchasingDashboard'
 import { TutorialCompras } from '../components/TutorialCompras'
 import { getInventoryPolicy } from '../lib/intelligence/engine'
 import type { InventoryEngineResult } from '../lib/intelligence/types'
-import type { Produto } from '../lib/store'
+import type { Produto, Venda } from '../lib/store'
 
 const containerVariants = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.05 } } }
 const itemVariants = { hidden: { y: 10, opacity: 0 }, show: { y: 0, opacity: 1 } }
 
 type ItemPlanejado = { produtoId: string; quantidade: number; precoCusto: number; fornecedorId: string }
+
+function vendasParaReposicao(vendas: Venda[], produtos: Produto[]): Venda[] {
+  return vendas.map(venda => {
+    const itens = new Map<string, Venda['itens'][number]>()
+    venda.itens.forEach(item => {
+      const produto = produtos.find(p => p.id === item.produtoId)
+      const origemId = produto?.produtoEstoqueOrigemId || item.produtoId
+      const divisor = Math.max(1, produto?.unidadesPorEstoqueOrigem || 1)
+      const atual = itens.get(origemId)
+      itens.set(origemId, { produtoId: origemId, quantidade: (atual?.quantidade || 0) + item.quantidade / divisor, precoUnit: produto?.produtoEstoqueOrigemId ? item.precoUnit * divisor : item.precoUnit })
+    })
+    return { ...venda, itens: [...itens.values()] }
+  })
+}
 
 function otimizarPlano(decisoes: InventoryEngineResult[], produtos: Produto[], orcamento: number, autonomo: boolean): ItemPlanejado[] {
   let saldo = Math.max(0, orcamento)
@@ -41,14 +55,16 @@ export function Compras() {
   const [decisoes, setDecisoes] = useState<InventoryEngineResult[]>([])
   const [modo, setModo] = useState<'recommendation' | 'controlled' | 'autonomous'>('recommendation')
   const [showHelp, setShowHelp] = useState(false)
-  const plano = useMemo(() => otimizarPlano(decisoes, produtos, orcamento, modo === 'autonomous'), [decisoes, produtos, orcamento, modo])
+  const produtosParaCompra = useMemo(() => produtos.filter(produto => !produto.produtoEstoqueOrigemId), [produtos])
+  const vendasParaCompra = useMemo(() => vendasParaReposicao(vendas, produtos), [vendas, produtos])
+  const plano = useMemo(() => otimizarPlano(decisoes, produtosParaCompra, orcamento, modo === 'autonomous'), [decisoes, produtosParaCompra, orcamento, modo])
 
   const rodarAgente = async () => {
     const todosPedidos = useStore.getState().pedidosCompra
     const lojaId = useStore.getState().lojaId
     
-    const sugestoes: InventoryEngineResult[] = await Promise.all(produtos.map(async p => {
-        return await getInventoryPolicy(p, vendas, todosPedidos, lojaId, produtos)
+    const sugestoes: InventoryEngineResult[] = await Promise.all(produtosParaCompra.map(async p => {
+        return await getInventoryPolicy(p, vendasParaCompra, todosPedidos, lojaId, produtosParaCompra)
     }))
     setDecisoes(sugestoes)
   }
@@ -144,7 +160,7 @@ export function Compras() {
                           <span>Ponto de pedido: <strong>{d.reorderPoint} un.</strong></span>
                           <span>Estoque alvo: <strong>{d.maximumStock} un.</strong></span>
                         </div>
-                        <p className="text-sm font-semibold">Compra necessária: {d.recommendedPurchaseQty} un. {itemPlanejado ? `Plano dentro do orçamento: ${itemPlanejado.quantidade} un.` : 'Fora do plano por orçamento, confiança ou custo.'}</p>
+                        <p className="text-sm font-semibold">Compra necessária: {d.recommendedPurchaseQty} un. {d.recommendedPurchaseQty <= 0 ? 'Sem reposição necessária segundo a demanda e os pedidos já aprovados.' : itemPlanejado ? `Plano dentro do orçamento: ${itemPlanejado.quantidade} un.` : 'Fora do plano por orçamento, confiança ou custo.'}</p>
                         <p className="text-xs text-muted-foreground">{d.reasons.join(' | ')}</p>
                         <div className="text-[10px] text-slate-400 font-mono mt-2">Score Importância: {d.automaticImportanceScore} | Confiança: {d.confidenceScore}%</div>
                     </motion.div>

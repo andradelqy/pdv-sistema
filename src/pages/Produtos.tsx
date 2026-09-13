@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useStore, fmtR, margemLiquida, type Produto } from '../lib/store'
+import { useStore, fmtR, margemLiquida, vendasParaControleEstoque, type Produto } from '../lib/store'
 import { calcularImportancia } from '../lib/intelligence/Importance'
 import { sugerirEstoqueMinimo } from '../lib/intelligence/engine'
 import { toast } from '../lib/toast'
@@ -35,7 +35,7 @@ export function Produtos() {
   const estoquesSugeridos = useMemo(() => {
     const mapa: Record<string, number> = {}
     produtos.forEach(p => {
-      mapa[p.id] = sugerirEstoqueMinimo(p, vendas, pedidosCompra)
+      mapa[p.id] = p.produtoEstoqueOrigemId ? 0 : sugerirEstoqueMinimo(p, vendasParaControleEstoque(vendas, produtos), pedidosCompra)
     })
     return mapa
   }, [produtos, vendas, pedidosCompra])
@@ -67,12 +67,15 @@ export function Produtos() {
     }
     
     // Calcula sugerido ao salvar
-    const sugerido = sugerirEstoqueMinimo(f, vendas, pedidosCompra)
+    const sugerido = sugerirEstoqueMinimo(f, vendasParaControleEstoque(vendas, produtos), pedidosCompra)
     
     const produtoSalvo = {
       ...f,
-      estoqueMin: sugerido,
-      pontoPedido: Math.max(sugerido + 2, Math.ceil(sugerido * 1.5)),
+      produtoEstoqueOrigemId: f.produtoEstoqueOrigemId || undefined,
+      unidadesPorEstoqueOrigem: f.produtoEstoqueOrigemId ? Math.max(1, f.unidadesPorEstoqueOrigem || 1) : undefined,
+      estoque: f.produtoEstoqueOrigemId ? 0 : f.estoque,
+      estoqueMin: f.produtoEstoqueOrigemId ? 0 : sugerido,
+      pontoPedido: f.produtoEstoqueOrigemId ? 0 : Math.max(sugerido + 2, Math.ceil(sugerido * 1.5)),
       imposto: 0,
       frete: 0,
       comissao: 0,
@@ -96,9 +99,9 @@ export function Produtos() {
   }
 
   const statusCls = (p: Produto) =>
-    p.estoque <= p.estoqueMin ? 'badge-danger' : p.estoque <= p.pontoPedido ? 'badge-warning' : 'badge-success'
+    p.produtoEstoqueOrigemId ? 'badge-info' : p.estoque <= p.estoqueMin ? 'badge-danger' : p.estoque <= p.pontoPedido ? 'badge-warning' : 'badge-success'
   const statusLabel = (p: Produto) =>
-    p.estoque <= p.estoqueMin ? 'Crítico' : p.estoque <= p.pontoPedido ? 'Alerta' : 'OK'
+    p.produtoEstoqueOrigemId ? 'Vinculado' : p.estoque <= p.estoqueMin ? 'Crítico' : p.estoque <= p.pontoPedido ? 'Alerta' : 'OK'
 
   return (
     <div className="flex flex-col gap-4">
@@ -136,6 +139,7 @@ export function Produtos() {
                 <tr><td colSpan={11} className="text-center py-8 text-muted-foreground">Nenhum produto cadastrado</td></tr>
               ) : pageItems.map(p => {
                 const mg = margemLiquida(p)
+                const origemEstoque = produtos.find(produto => produto.id === p.produtoEstoqueOrigemId)
                 const sugerido = estoquesSugeridos[p.id] || p.estoqueMin
                 const temDivergencia = sugerido !== p.estoqueMin
 
@@ -144,11 +148,13 @@ export function Produtos() {
                     <td><code className="text-xs bg-muted px-1 rounded">{p.sku}</code></td>
                     <td className="font-medium">{p.nome}</td>
                     <td><span className="badge-adega badge-info">{p.categoria || '—'}</span></td>
-                    <td className={`font-bold ${p.estoque <= p.estoqueMin ? 'text-destructive' : p.estoque <= p.pontoPedido ? 'text-warning' : ''}`}>{p.estoque}</td>
+                    <td className={`font-bold ${p.produtoEstoqueOrigemId ? 'text-primary' : p.estoque <= p.estoqueMin ? 'text-destructive' : p.estoque <= p.pontoPedido ? 'text-warning' : ''}`}>
+                      {origemEstoque ? `${origemEstoque.estoque} ${origemEstoque.nome}` : p.estoque}
+                    </td>
                     <td>
                       <div className="flex items-center gap-1.5">
-                        <span className="text-foreground font-medium">{p.estoqueMin}</span>
-                        {temDivergencia && (
+                        <span className="text-foreground font-medium">{p.produtoEstoqueOrigemId ? 'Origem' : p.estoqueMin}</span>
+                        {!p.produtoEstoqueOrigemId && temDivergencia && (
                           <span
                             className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-semibold cursor-help"
                             title={`Mínimo sugerido pelo giro de vendas: ${sugerido} un`}
@@ -217,9 +223,9 @@ export function Produtos() {
                 ['Custo *', 'precoCompra', 'number'],
                 ['Venda *', 'precoVenda', 'number'],
                 ['Margem Alvo (%)', 'margemAlvo', 'number'],
-                ['Estoque', 'estoque', 'number'],
+                ['Estoque físico', 'estoque', 'number'],
                 ['URL Imagem', 'imagem', 'text'],
-              ] as [string, keyof Omit<Produto, 'id'>, string][]).map(([label, key, type]) => (
+              ] as [string, keyof Omit<Produto, 'id'>, string][]).filter(([, key]) => key !== 'estoque' || !(form as Produto).produtoEstoqueOrigemId).map(([label, key, type]) => (
                 <div key={key}>
                   <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-1">{label}</label>
                   <input
@@ -231,6 +237,28 @@ export function Produtos() {
                   />
                 </div>
               ))}
+            </div>
+            <div className="mt-4 p-4 border border-border rounded-xl bg-muted/30 space-y-3">
+              <div>
+                <h4 className="text-sm font-semibold">Composição de estoque</h4>
+                <p className="text-xs text-muted-foreground">Use para itens derivados, como doses. A venda do item baixará o estoque do produto físico vinculado.</p>
+              </div>
+              <select
+                className="w-full p-2 border border-border rounded-lg bg-background text-sm"
+                value={(form as Produto).produtoEstoqueOrigemId || ''}
+                onChange={e => setField('produtoEstoqueOrigemId', e.target.value || undefined)}
+              >
+                <option value="">Este produto possui estoque próprio</option>
+                {produtos.filter(produto => produto.id !== editId && !produto.produtoEstoqueOrigemId).map(produto => (
+                  <option key={produto.id} value={produto.id}>{produto.nome} ({produto.estoque} un. em estoque)</option>
+                ))}
+              </select>
+              {(form as Produto).produtoEstoqueOrigemId && (
+                <div>
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Quantas doses/unidades rende uma unidade de estoque?</label>
+                  <input type="number" min={1} step="1" className="w-full p-2 border border-border rounded-lg bg-background" value={(form as Produto).unidadesPorEstoqueOrigem || ''} onChange={e => setField('unidadesPorEstoqueOrigem', parseFloat(e.target.value) || 1)} />
+                </div>
+              )}
             </div>
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => setModal(false)} className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted">Cancelar</button>

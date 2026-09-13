@@ -3,7 +3,7 @@
 // ======================================================================
 
 import { useState, useRef, useEffect, useMemo, useCallback, memo } from 'react'
-import { useStore, fmtR, hoje } from '../lib/store'
+import { useStore, fmtR, hoje, type Produto, type ItemVenda } from '../lib/store'
 import { toast } from '../lib/toast'
 import {
   Search, Trash2, Printer, CheckCircle, Plus, Minus,
@@ -39,6 +39,22 @@ interface Desconto {
   valor: number
 }
 
+function estoqueDisponivel(produto: Produto, produtos: Produto[]): number {
+  if (!produto.produtoEstoqueOrigemId) return produto.estoque
+  const origem = produtos.find(item => item.id === produto.produtoEstoqueOrigemId)
+  return (origem?.estoque || 0) * Math.max(1, produto.unidadesPorEstoqueOrigem || 1)
+}
+
+function consumoPorProduto(itens: ItemVenda[], produtos: Produto[]): Map<string, number> {
+  return itens.reduce((consumo, item) => {
+    const produto = produtos.find(p => p.id === item.produtoId)
+    const produtoId = produto?.produtoEstoqueOrigemId || item.produtoId
+    const divisor = Math.max(1, produto?.unidadesPorEstoqueOrigem || 1)
+    consumo.set(produtoId, (consumo.get(produtoId) || 0) + item.quantidade / divisor)
+    return consumo
+  }, new Map<string, number>())
+}
+
 // ---------- Hooks personalizados ----------
 
 // 1. useCart – gerencia carrinho, total, persistência localStorage
@@ -56,7 +72,8 @@ function useCart() {
 
   const addItem = useCallback((produtoId: string) => {
     const p = produtos.find(x => x.id === produtoId)
-    if (!p || p.estoque <= 0) {
+    const jaNoCarrinho = carrinho.find(item => item.produtoId === produtoId)?.quantidade || 0
+    if (!p || estoqueDisponivel(p, produtos) <= jaNoCarrinho) {
       toast('Sem estoque', 'warning')
       return false
     }
@@ -70,17 +87,18 @@ function useCart() {
       return [...c, { produtoId, quantidade: 1 }]
     })
     return true
-  }, [produtos])
+  }, [produtos, carrinho])
 
   const updateQty = useCallback((produtoId: string, val: number) => {
     if (val <= 0) {
       setCarrinho(c => c.filter(i => i.produtoId !== produtoId))
       return
     }
-    setCarrinho(c =>
-      c.map(i => (i.produtoId === produtoId ? { ...i, quantidade: val } : i))
-    )
-  }, [])
+    const produto = produtos.find(p => p.id === produtoId)
+    const quantidade = produto ? Math.min(val, estoqueDisponivel(produto, produtos)) : val
+    if (quantidade < val) toast('Quantidade limitada ao estoque disponível', 'warning')
+    setCarrinho(c => c.map(i => (i.produtoId === produtoId ? { ...i, quantidade } : i)))
+  }, [produtos])
 
   const removeItem = useCallback((produtoId: string) => {
     setCarrinho(c => c.filter(i => i.produtoId !== produtoId))
@@ -326,8 +344,9 @@ const ProductList = memo(({
       </div>
       <div className="overflow-y-auto max-h-80 flex flex-col gap-1">
         {produtos.map(p => {
-          const critico = p.estoque <= p.estoqueMin
-          const alerta = p.estoque <= p.pontoPedido && p.estoque > p.estoqueMin
+          const estoqueDerivado = estoqueDisponivel(p, produtos)
+          const critico = !p.produtoEstoqueOrigemId && p.estoque <= p.estoqueMin
+          const alerta = !p.produtoEstoqueOrigemId && p.estoque <= p.pontoPedido && p.estoque > p.estoqueMin
           return (
             <button
               key={p.id}
@@ -341,7 +360,7 @@ const ProductList = memo(({
               <div>
                 <p className="font-medium text-sm">{p.nome}</p>
                 <p className="text-xs text-muted-foreground">
-                  {p.sku} · Est: {p.estoque}
+                  {p.sku} · {p.produtoEstoqueOrigemId ? `Disponível: ${Math.floor(estoqueDerivado)} doses/un.` : `Est: ${p.estoque}`}
                   {critico && ' ⚠️ Crítico'}
                   {alerta && ' ⚠️ Repor'}
                 </p>
@@ -737,11 +756,16 @@ export function PDV() {
       return
     }
 
-    // Validar estoque
-    for (const item of carrinho) {
-      const p = produtos.find(x => x.id === item.produtoId)
-      if (!p || p.estoque < item.quantidade) {
-        toast(`Estoque insuficiente: ${p?.nome || ''}`, 'danger')
+    const itensVenda = carrinho.map(item => {
+      const produto = produtos.find(p => p.id === item.produtoId)!
+      return { produtoId: item.produtoId, quantidade: item.quantidade, precoUnit: produto.precoVenda }
+    })
+
+    // Valida o estoque físico somando doses e unidades que consomem o mesmo produto.
+    for (const [produtoId, quantidade] of consumoPorProduto(itensVenda, produtos)) {
+      const produto = produtos.find(p => p.id === produtoId)
+      if (!produto || produto.estoque + 0.0001 < quantidade) {
+        toast(`Estoque insuficiente: ${produto?.nome || ''}`, 'danger')
         return
       }
     }
@@ -764,10 +788,7 @@ export function PDV() {
       data: hoje(),
       clienteId: temFiado ? clienteId : undefined,
       pagamento: temFiado ? 'fiado' : pagamentos[0]?.forma || 'dinheiro', // store usa pagamento único, mas guardamos os múltiplos no obs
-      itens: carrinho.map(i => {
-        const p = produtos.find(x => x.id === i.produtoId)!
-        return { produtoId: i.produtoId, quantidade: i.quantidade, precoUnit: p.precoVenda }
-      }),
+      itens: itensVenda,
       total: totalComDesconto,
       obs: obs + (desconto.valor > 0 ? ` | Desconto: ${fmtR(desconto.valor)}` : '') +
            (pagamentos.length > 1 ? ` | Pagamentos: ${pagamentos.map(p => `${p.forma} ${fmtR(p.valor)}`).join(', ')}` : ''),

@@ -26,6 +26,10 @@ export type Produto = {
   pontoPedido: number
   qualidade: number
   imagem?: string
+  /** Produto físico cujo estoque é consumido por este item (ex.: garrafa para uma dose). */
+  produtoEstoqueOrigemId?: string
+  /** Quantas unidades deste item uma unidade do produto físico rende (ex.: 10 doses por garrafa). */
+  unidadesPorEstoqueOrigem?: number
   automaticQualityScore?: number
   automaticQualityLevel?: number
   confidenceScore?: number
@@ -137,9 +141,44 @@ export type PedidoCompra = {
   lojaId: string
 }
 
+export function vendasParaControleEstoque(vendas: Venda[], produtos: Produto[]): Venda[] {
+  return vendas.map(venda => {
+    const itens = new Map<string, ItemVenda>()
+    venda.itens.forEach(item => {
+      const produto = produtos.find(p => p.id === item.produtoId)
+      const origemId = produto?.produtoEstoqueOrigemId
+      const divisor = Math.max(1, produto?.unidadesPorEstoqueOrigem || 1)
+      const produtoId = origemId || item.produtoId
+      const atual = itens.get(produtoId)
+      itens.set(produtoId, {
+        produtoId,
+        quantidade: (atual?.quantidade || 0) + item.quantidade / divisor,
+        // Preserva o faturamento ao converter doses para a unidade física.
+        precoUnit: origemId ? item.precoUnit * divisor : item.precoUnit,
+      })
+    })
+    return { ...venda, itens: [...itens.values()] }
+  })
+}
+
+function consumoEstoque(itens: ItemVenda[], produtos: Produto[]): Map<string, number> {
+  return itens.reduce((consumos, item) => {
+    const produto = produtos.find(p => p.id === item.produtoId)
+    const origemId = produto?.produtoEstoqueOrigemId || item.produtoId
+    const divisor = Math.max(1, produto?.unidadesPorEstoqueOrigem || 1)
+    consumos.set(origemId, (consumos.get(origemId) || 0) + item.quantidade / divisor)
+    return consumos
+  }, new Map<string, number>())
+}
+
 function recalcularPoliticaEstoque(produtos: Produto[], vendas: Venda[], pedidosCompra: PedidoCompra[]): Produto[] {
+  const vendasConvertidas = vendasParaControleEstoque(vendas, produtos)
   return produtos.map(produto => {
-    const estoqueMin = sugerirEstoqueMinimo(produto, vendas, pedidosCompra)
+    // Itens derivados não possuem estoque próprio nem devem receber recomendação de compra.
+    if (produto.produtoEstoqueOrigemId) {
+      return produto.estoqueMin === 0 && produto.pontoPedido === 0 ? produto : { ...produto, estoqueMin: 0, pontoPedido: 0 }
+    }
+    const estoqueMin = sugerirEstoqueMinimo(produto, vendasConvertidas, pedidosCompra)
     const pontoPedido = Math.max(estoqueMin + 2, Math.ceil(estoqueMin * 1.5))
     return produto.estoqueMin === estoqueMin && produto.pontoPedido === pontoPedido
       ? produto
@@ -251,11 +290,12 @@ export const useStore = create<Store>()(
       addVenda: (v) => {
         const venda: Venda = { ...v, id: uid(), criadoEm: new Date().toISOString() }
         set(s => {
+          const consumo = consumoEstoque(v.itens, s.produtos)
           if (!s.caixaAberto) return s
           const produtosComEstoque = s.produtos.map(p => {
-            const item = v.itens.find(i => i.produtoId === p.id)
-            if (!item) return p
-            const novoEstoque = Math.max(0, p.estoque - item.quantidade)
+            const quantidade = consumo.get(p.id)
+            if (!quantidade) return p
+            const novoEstoque = Math.max(0, p.estoque - quantidade)
             return { ...p, estoque: novoEstoque }
           })
           const prods = recalcularPoliticaEstoque(produtosComEstoque, [...s.vendas, venda], s.pedidosCompra)
@@ -392,10 +432,10 @@ export const useStore = create<Store>()(
         }
         set(s => {
           // Abate estoque
+          const consumo = consumoEstoque(p.itens, s.produtos)
           const produtosComEstoque = s.produtos.map(prod => {
-            const item = p.itens.find(i => i.produtoId === prod.id)
-            if (!item) return prod
-            return { ...prod, estoque: Math.max(0, prod.estoque - item.quantidade) }
+            const quantidade = consumo.get(prod.id)
+            return quantidade ? { ...prod, estoque: Math.max(0, prod.estoque - quantidade) } : prod
           })
           const prods = recalcularPoliticaEstoque(produtosComEstoque, s.vendas, s.pedidosCompra)
           prods.filter((prod, index) => prod !== s.produtos[index]).forEach(prod => trySync('upsertProduto', [prod, useStore.getState().lojaId], sync.upsertProduto))

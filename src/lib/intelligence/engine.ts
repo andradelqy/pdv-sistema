@@ -209,6 +209,25 @@ function analisarDemanda(
 }
 
 /**
+ * Recupera uma média conservadora para produtos que venderam nos últimos seis
+ * meses, mas ficaram sem venda na janela curta de 60 dias. Sem isso, uma
+ * ruptura poderia receber uma recomendação de zero unidades.
+ */
+function calcularDemandaHistorica(produto: Produto, vendas: Venda[]): number {
+  const limite = Date.now() - 180 * MS_PER_DAY;
+  const vendasRecentes = vendas.filter(venda => {
+    const data = new Date(venda.data).getTime();
+    return Number.isFinite(data) && data >= limite && quantidadeProdutoNaVenda(venda, produto.id) > 0;
+  });
+  if (!vendasRecentes.length) return 0;
+
+  const total = vendasRecentes.reduce((soma, venda) => soma + quantidadeProdutoNaVenda(venda, produto.id), 0);
+  const primeiraVenda = Math.min(...vendasRecentes.map(venda => new Date(venda.data).getTime()));
+  const dias = Math.max(30, Math.min(180, Math.ceil((Date.now() - primeiraVenda) / MS_PER_DAY) + 1));
+  return total / dias;
+}
+
+/**
  * Classificação XYZ:
  *
  * X = demanda previsível
@@ -1162,10 +1181,11 @@ export async function getInventoryPolicy(
   /**
    * Calculamos a demanda baseada no histórico limpo de rupturas
    */
-  const demanda =
-    demandaBase > 0
-      ? demandaBase
-      : demandaStats.dailyDemand;
+  const demanda = Math.max(
+    demandaBase,
+    demandaStats.dailyDemand,
+    calcularDemandaHistorica(produto, vendas)
+  );
 
   // ---------------------------------------------------------
   // 2. CLASSIFICAÇÕES
