@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware'
 import { hojeBRT, isoParaDataBRT, cortarDataBRT } from './dateBR'
 import { cmvDaVenda } from './lucro'
 import * as sync from './sync'
+import { sugerirEstoqueMinimo } from './intelligence/engine'
 
 export type Produto = {
   id: string
@@ -25,6 +26,9 @@ export type Produto = {
   pontoPedido: number
   qualidade: number
   imagem?: string
+  automaticQualityScore?: number
+  automaticQualityLevel?: number
+  confidenceScore?: number
 }
 
 export type Movimentacao = {
@@ -129,7 +133,18 @@ export type PedidoCompra = {
   status: 'draft' | 'pending' | 'in_transit' | 'received' | 'cancelled'
   itens: { produtoId: string, quantidade: number, precoCusto: number }[]
   dataPedido: string
+  recebidoEm?: string
   lojaId: string
+}
+
+function recalcularPoliticaEstoque(produtos: Produto[], vendas: Venda[], pedidosCompra: PedidoCompra[]): Produto[] {
+  return produtos.map(produto => {
+    const estoqueMin = sugerirEstoqueMinimo(produto, vendas, pedidosCompra)
+    const pontoPedido = Math.max(estoqueMin + 2, Math.ceil(estoqueMin * 1.5))
+    return produto.estoqueMin === estoqueMin && produto.pontoPedido === pontoPedido
+      ? produto
+      : { ...produto, estoqueMin, pontoPedido }
+  })
 }
 
 type Store = {
@@ -216,13 +231,13 @@ export const useStore = create<Store>()(
     addMovimentacao: (m) => {
       const mov: Movimentacao = { ...m, id: uid() }
       set(s => {
-        const prods = s.produtos.map(p => {
+        const produtosComEstoque = s.produtos.map(p => {
           if (p.id !== m.produtoId) return p
           const novoEst = m.tipo === 'entrada' ? p.estoque + m.quantidade : p.estoque - m.quantidade
-          const atualizado = { ...p, estoque: Math.max(0, novoEst) }
-          trySync('upsertProduto', [atualizado, useStore.getState().lojaId], sync.upsertProduto)
-          return atualizado
+          return { ...p, estoque: Math.max(0, novoEst) }
         })
+        const prods = recalcularPoliticaEstoque(produtosComEstoque, s.vendas, s.pedidosCompra)
+        prods.filter((p, index) => p !== s.produtos[index]).forEach(p => trySync('upsertProduto', [p, useStore.getState().lojaId], sync.upsertProduto))
         return { movimentacoes: [...s.movimentacoes, mov], produtos: prods }
       })
       trySync('insertMovimentacao', [mov, useStore.getState().lojaId], sync.insertMovimentacao)
@@ -236,24 +251,14 @@ export const useStore = create<Store>()(
         const venda: Venda = { ...v, id: uid(), criadoEm: new Date().toISOString() }
         set(s => {
           if (!s.caixaAberto) return s
-          const prods = s.produtos.map(p => {
+          const produtosComEstoque = s.produtos.map(p => {
             const item = v.itens.find(i => i.produtoId === p.id)
             if (!item) return p
             const novoEstoque = Math.max(0, p.estoque - item.quantidade)
-            
-            // Recalcular manualmente pois precisamos da ref atualizada
-            const novoMin = 1 // simplificação
-            const novoPontoPedido =  3 // simplificação
-
-            const atualizado = {
-              ...p,
-              estoque: novoEstoque,
-              estoqueMin: novoMin,
-              pontoPedido: novoPontoPedido,
-            }
-            trySync('upsertProduto', [atualizado], sync.upsertProduto)
-            return atualizado
+            return { ...p, estoque: novoEstoque }
           })
+          const prods = recalcularPoliticaEstoque(produtosComEstoque, [...s.vendas, venda], s.pedidosCompra)
+          prods.filter((p, index) => p !== s.produtos[index]).forEach(p => trySync('upsertProduto', [p, useStore.getState().lojaId], sync.upsertProduto))
           const clientes = v.clienteId && v.pagamento === 'fiado'
             ? s.clientes.map(c => c.id === v.clienteId
                 ? { ...c, saldo: c.saldo + v.total, compras: c.compras + 1 }
@@ -271,20 +276,20 @@ export const useStore = create<Store>()(
           return { vendas: [...s.vendas, venda], produtos: prods, clientes, caixaEntradas, movimentacoes }
         })
         // Write-through
-        trySync('insertVenda', [venda, v.itens], sync.insertVenda)
+        trySync('insertVenda', [venda, v.itens, useStore.getState().lojaId], sync.insertVenda)
         
         if (v.pagamento !== 'fiado') {
           trySync('insertCaixaEntrada', [{
             tipo: 'venda', pagamento: v.pagamento, valor: v.total,
             data: hoje(), descricao: `Venda ${v.pagamento}`,
             caixaId: useStore.getState().caixaAberto?.id,
-          }], sync.insertCaixaEntrada)
+          }, useStore.getState().lojaId], sync.insertCaixaEntrada)
         }
         v.itens.forEach(item => {
           trySync('insertMovimentacao', [{
             id: uid(), produtoId: item.produtoId, tipo: 'saida',
             quantidade: item.quantidade, data: v.data, obs: `Venda ${v.pagamento}`,
-          }], sync.insertMovimentacao)
+          }, useStore.getState().lojaId], sync.insertMovimentacao)
         })
       },
 
@@ -386,13 +391,13 @@ export const useStore = create<Store>()(
         }
         set(s => {
           // Abate estoque
-          const prods = s.produtos.map(prod => {
+          const produtosComEstoque = s.produtos.map(prod => {
             const item = p.itens.find(i => i.produtoId === prod.id)
             if (!item) return prod
-            const atualizado = { ...prod, estoque: Math.max(0, prod.estoque - item.quantidade) }
-            trySync('upsertProduto', [atualizado], sync.upsertProduto)
-            return atualizado
+            return { ...prod, estoque: Math.max(0, prod.estoque - item.quantidade) }
           })
+          const prods = recalcularPoliticaEstoque(produtosComEstoque, s.vendas, s.pedidosCompra)
+          prods.filter((prod, index) => prod !== s.produtos[index]).forEach(prod => trySync('upsertProduto', [prod, useStore.getState().lojaId], sync.upsertProduto))
           const movimentacoes = [...s.movimentacoes, ...p.itens.map(item => ({
             id: uid(),
             produtoId: item.produtoId,
@@ -468,10 +473,15 @@ export const useStore = create<Store>()(
             }
           }
 
+          const produtos = novaVendaGerada
+            ? recalcularPoliticaEstoque(s.produtos, vendas, s.pedidosCompra)
+            : s.produtos
+
           return {
             entregas: entregasAtualizadas,
             vendas,
             caixaEntradas,
+            produtos,
           }
         })
 
@@ -479,6 +489,10 @@ export const useStore = create<Store>()(
         if (novaVendaGerada) {
           const venda = novaVendaGerada as Venda
           trySync('insertVenda', [venda, venda.itens, useStore.getState().lojaId], sync.insertVenda)
+          venda.itens.forEach(item => {
+            const produto = useStore.getState().produtos.find(p => p.id === item.produtoId)
+            if (produto) trySync('upsertProduto', [produto, useStore.getState().lojaId], sync.upsertProduto)
+          })
         }
         if (entradaCaixaGerada) trySync('insertCaixaEntrada', [entradaCaixaGerada as EntradaCaixa, useStore.getState().lojaId], sync.insertCaixaEntrada)
       },
@@ -494,32 +508,45 @@ export const useStore = create<Store>()(
         movimentacoes: [], vendas: [], clientes: [], caixaEntradas: [], caixas: [], caixaAberto: undefined
       }),
       clearAll: () => set({ produtos: [], movimentacoes: [], vendas: [], clientes: [], caixaEntradas: [], caixas: [], caixaAberto: undefined }),
-       hydrateFromRemote: (data) => set(s => ({
-         produtos: data.produtos.length ? data.produtos : s.produtos,
-         movimentacoes: data.movimentacoes.length ? data.movimentacoes : s.movimentacoes,
-         vendas: data.vendas.length ? data.vendas : s.vendas,
-         clientes: data.clientes.length ? data.clientes : s.clientes,
-         caixaEntradas: data.caixaEntradas.length ? data.caixaEntradas : s.caixaEntradas,
-         caixas: data.caixas.length ? data.caixas : s.caixas,
-         entregas: data.entregas.length ? data.entregas : s.entregas,
-         caixaAberto: data.caixas.find(c => !c.fechadoEm) || s.caixaAberto,
+       hydrateFromRemote: (data) => set(() => ({
+         produtos: data.produtos,
+         movimentacoes: data.movimentacoes,
+         vendas: data.vendas,
+         clientes: data.clientes,
+         caixaEntradas: data.caixaEntradas,
+         caixas: data.caixas,
+         entregas: data.entregas,
+         pedidosCompra: data.pedidosCompra,
+         caixaAberto: data.caixas.find(c => !c.fechadoEm),
        })),
-       setRole: (role) => set({ currentRole: role }),
+       setRole: (role, lojaId) => set({ currentRole: role, lojaId }),
        
-       addPedidoCompra: (p) => set(s => ({ pedidosCompra: [...s.pedidosCompra, p] })),
-       receberPedidoCompra: (id) => set(s => {
-         const pedido = s.pedidosCompra.find(p => p.id === id)
-         if (!pedido || pedido.status === 'received') return s
-         const prods = s.produtos.map(p => {
-           const item = pedido.itens.find(i => i.produtoId === p.id)
-           if (!item) return p
-           return { ...p, estoque: p.estoque + item.quantidade }
+       addPedidoCompra: (p) => {
+         set(s => ({ pedidosCompra: [...s.pedidosCompra, p] }))
+         trySync('upsertPedidoCompra', [p, useStore.getState().lojaId], sync.upsertPedidoCompra)
+       },
+       receberPedidoCompra: (id) => {
+         let recebido: PedidoCompra | undefined
+         set(s => {
+           const pedido = s.pedidosCompra.find(p => p.id === id)
+           if (!pedido || pedido.status === 'received') return s
+           recebido = { ...pedido, status: 'received', recebidoEm: new Date().toISOString() }
+           const produtosComEstoque = s.produtos.map(p => {
+             const item = pedido.itens.find(i => i.produtoId === p.id)
+             return item ? { ...p, estoque: p.estoque + item.quantidade } : p
+           })
+           const pedidosAtualizados = s.pedidosCompra.map(p => p.id === id ? recebido! : p)
+           const prods = recalcularPoliticaEstoque(produtosComEstoque, s.vendas, pedidosAtualizados)
+           return { pedidosCompra: pedidosAtualizados, produtos: prods }
          })
-         return { 
-           pedidosCompra: s.pedidosCompra.map(p => p.id === id ? {...p, status: 'received'} : p),
-           produtos: prods
+         if (recebido) {
+           trySync('upsertPedidoCompra', [recebido, useStore.getState().lojaId], sync.upsertPedidoCompra)
+           recebido.itens.forEach(item => {
+             const produto = useStore.getState().produtos.find(p => p.id === item.produtoId)
+             if (produto) trySync('upsertProduto', [produto, useStore.getState().lojaId], sync.upsertProduto)
+           })
          }
-       }),
+       },
      }),
      { name: 'adega-pro-store' }
    )

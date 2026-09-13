@@ -30,6 +30,8 @@ interface PagamentoParcial {
   id: string
   forma: FormaPagamento
   valor: number
+  /** Valor preenchido pelo PDV; deixa de ser automático quando o operador o edita. */
+  automatico?: boolean
 }
 
 interface Desconto {
@@ -106,7 +108,7 @@ function useCart() {
 function usePayment(total: number) {
   const [desconto, setDesconto] = useState<Desconto>({ tipo: 'fixo', valor: 0 })
   const [pagamentos, setPagamentos] = useState<PagamentoParcial[]>([
-    { id: crypto.randomUUID(), forma: FormaPagamentoEnum.DINHEIRO, valor: 0 }
+    { id: crypto.randomUUID(), forma: FormaPagamentoEnum.DINHEIRO, valor: 0, automatico: true }
   ])
   const [clienteId, setClienteId] = useState('')
   const [obs, setObs] = useState('')
@@ -116,7 +118,16 @@ function usePayment(total: number) {
     return desconto.valor
   }, [total, desconto])
 
-  const totalComDesconto = total - valorDesconto
+  const totalComDesconto = Math.max(0, total - valorDesconto)
+
+  // No pagamento simples, o campo acompanha o total do pedido automaticamente.
+  // Se o operador editar o valor ou adicionar outra forma, ele mantém o controle do rateio.
+  useEffect(() => {
+    setPagamentos(prev => {
+      if (prev.length !== 1 || !prev[0].automatico) return prev
+      return [{ ...prev[0], valor: totalComDesconto }]
+    })
+  }, [totalComDesconto])
 
   // Soma dos pagamentos
   const somaPagamentos = pagamentos.reduce((s, p) => s + (p.valor || 0), 0)
@@ -133,9 +144,9 @@ function usePayment(total: number) {
   const adicionarPagamento = useCallback(() => {
     setPagamentos(prev => [
       ...prev,
-      { id: crypto.randomUUID(), forma: FormaPagamentoEnum.DINHEIRO, valor: 0 }
+      { id: crypto.randomUUID(), forma: FormaPagamentoEnum.DINHEIRO, valor: Math.max(0, totalComDesconto - prev.reduce((s, p) => s + p.valor, 0)) }
     ])
-  }, [])
+  }, [totalComDesconto])
 
   const removerPagamento = useCallback((id: string) => {
     if (pagamentos.length <= 1) {
@@ -148,7 +159,7 @@ function usePayment(total: number) {
   const atualizarPagamento = useCallback((id: string, campo: 'forma' | 'valor', valor: any) => {
     setPagamentos(prev =>
       prev.map(p =>
-        p.id === id ? { ...p, [campo]: campo === 'valor' ? parseFloat(valor) || 0 : valor } : p
+        p.id === id ? { ...p, [campo]: campo === 'valor' ? parseFloat(valor) || 0 : valor, automatico: campo === 'valor' ? false : p.automatico } : p
       )
     )
   }, [])
@@ -164,7 +175,7 @@ function usePayment(total: number) {
   }, [pagamentos, somaPagamentos, totalComDesconto, clienteId])
 
   const reset = useCallback(() => {
-    setPagamentos([{ id: crypto.randomUUID(), forma: FormaPagamentoEnum.DINHEIRO, valor: 0 }])
+    setPagamentos([{ id: crypto.randomUUID(), forma: FormaPagamentoEnum.DINHEIRO, valor: 0, automatico: true }])
     setDesconto({ tipo: 'fixo', valor: 0 })
     setClienteId('')
     setObs('')

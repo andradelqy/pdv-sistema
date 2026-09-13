@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useStore, fmtR, margemLiquida, type Produto } from '../lib/store'
-import { sugerirEstoqueMinimo } from '../lib/purchasing/safetyStock'
+import { calcularImportancia } from '../lib/intelligence/Importance'
+import { sugerirEstoqueMinimo } from '../lib/intelligence/engine'
 import { toast } from '../lib/toast'
-import { Plus, Pencil, Trash2, Search, Sparkles, Wand2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Search, Sparkles } from 'lucide-react'
 
 const EMPTY: Omit<Produto, 'id'> = {
   sku: '', nome: '', barcode: '', descricao: '', categoria: '', fornecedor: '',
@@ -11,7 +12,17 @@ const EMPTY: Omit<Produto, 'id'> = {
 }
 
 export function Produtos() {
-  const { produtos, vendas, pedidosCompra, movimentacoes, addProduto, updateProduto, deleteProduto } = useStore()
+  const { produtos, vendas, pedidosCompra, addProduto, updateProduto, deleteProduto } = useStore()
+  
+  // Atualiza importâncias automaticamente quando dados mudam
+  useEffect(() => {
+    produtos.forEach(p => {
+       const imp = calcularImportancia(p, vendas, produtos);
+       if (p.automaticQualityScore !== imp.score) {
+         updateProduto({ ...p, automaticQualityScore: imp.score, automaticQualityLevel: imp.level, confidenceScore: 80 });
+       }
+    });
+  }, [produtos, vendas, updateProduto]);
   const [busca, setBusca] = useState('')
   const [filterCat, setFilterCat] = useState('')
   const [modal, setModal] = useState(false)
@@ -28,23 +39,6 @@ export function Produtos() {
     })
     return mapa
   }, [produtos, vendas, pedidosCompra])
-
-  // Aplica a sugestão inteligente em lote para todos os produtos
-  function aplicarMinimoInteligenteLote() {
-    let alterados = 0
-    produtos.forEach(p => {
-      const sugerido = sugerirEstoqueMinimo(p, vendas, pedidosCompra)
-      if (p.estoqueMin !== sugerido) {
-        updateProduto({
-          ...p,
-          estoqueMin: sugerido,
-          pontoPedido: Math.max(sugerido + 2, Math.ceil(sugerido * 1.5))
-        })
-        alterados++
-      }
-    })
-    toast(`${alterados} produtos tiveram estoque mínimo atualizados pela IA`, 'success')
-  }
 
   const cats = [...new Set(produtos.map(p => p.categoria).filter(Boolean))]
 
@@ -63,12 +57,6 @@ export function Produtos() {
     setForm(p); setEditId(p.id); setModal(true)
   }
 
-  function aplicarSugeridoNoForm() {
-    if (editId && estoquesSugeridos[editId]) {
-      setForm({ ...form, estoqueMin: estoquesSugeridos[editId] })
-    }
-  }
-
   function salvar() {
     const f = form as Produto
     if (!f.sku || !f.nome || f.precoCompra <= 0 || f.precoVenda <= 0) {
@@ -83,8 +71,8 @@ export function Produtos() {
     
     const produtoSalvo = {
       ...f,
-      estoqueMin: f.estoqueMin || sugerido,
-      pontoPedido: f.pontoPedido || Math.max(sugerido + 2, Math.ceil(sugerido * 1.5)),
+      estoqueMin: sugerido,
+      pontoPedido: Math.max(sugerido + 2, Math.ceil(sugerido * 1.5)),
       imposto: 0,
       frete: 0,
       comissao: 0,
@@ -117,13 +105,6 @@ export function Produtos() {
       <div className="flex items-center gap-3 flex-wrap">
         <h2 className="text-xl font-bold">Produtos</h2>
         <div className="ml-auto flex gap-2">
-          <button
-            onClick={aplicarMinimoInteligenteLote}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold shadow-sm transition active:scale-95 cursor-pointer"
-            title="Recalcular e ajustar estoque mínimo de todos os produtos com base nas vendas recentes"
-          >
-            <Wand2 size={14} /> Mínimo Inteligente (Auto)
-          </button>
           <button onClick={openNew} className="flex items-center gap-1 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90">
             <Plus size={14} /> Novo
           </button>
@@ -213,23 +194,16 @@ export function Produtos() {
               <button onClick={() => setModal(false)} className="text-muted-foreground hover:text-foreground">✕</button>
             </div>
 
-            <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-between gap-2">
+            <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center gap-2">
               <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-400">
                  <Sparkles size={16} className="text-amber-500 shrink-0" />
                  <span>
-                   Sugerido pelo giro:{' '}
+                   Estoque mínimo calculado automaticamente:{' '}
                    <strong>
                      {sugerirEstoqueMinimo({ ...(form as Produto), id: editId || 'temp' }, vendas, pedidosCompra)} un
                    </strong>
                  </span>
                </div>
-              <button
-                type="button"
-                onClick={aplicarSugeridoNoForm}
-                className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold transition active:scale-95 cursor-pointer shadow-sm"
-              >
-                Aplicar Sugestão
-              </button>
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
@@ -244,9 +218,6 @@ export function Produtos() {
                 ['Venda *', 'precoVenda', 'number'],
                 ['Margem Alvo (%)', 'margemAlvo', 'number'],
                 ['Estoque', 'estoque', 'number'],
-                ['Mínimo', 'estoqueMin', 'number'],
-                ['Ponto Pedido', 'pontoPedido', 'number'],
-                ['Qualidade (1-5)', 'qualidade', 'number'],
                 ['URL Imagem', 'imagem', 'text'],
               ] as [string, keyof Omit<Produto, 'id'>, string][]).map(([label, key, type]) => (
                 <div key={key}>
@@ -254,7 +225,6 @@ export function Produtos() {
                   <input
                     type={type} step={type === 'number' ? '0.01' : undefined}
                     min={type === 'number' ? 0 : undefined}
-                    max={key === 'qualidade' ? 5 : undefined}
                     className="w-full p-2 border border-border rounded-lg bg-background"
                     value={(form as Record<string, unknown>)[key] as string || ''}
                     onChange={e => setField(key, type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value)}

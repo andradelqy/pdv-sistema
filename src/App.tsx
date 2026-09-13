@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { useStore } from './lib/store';
-import { carregarTudo } from './lib/sync';
+import { carregarTudo, processarFilaSync } from './lib/sync';
 import { ToastProvider } from './lib/toast';
 import { Login } from './Login';
 import { Dashboard } from './pages/Dashboard';
@@ -280,6 +280,13 @@ function AppContent() {
 
     return () => subscription.unsubscribe();
   }, [tema, hydrateFromRemote]);
+
+  useEffect(() => {
+    const syncOfflineQueue = () => { void processarFilaSync(); };
+    window.addEventListener('online', syncOfflineQueue);
+    syncOfflineQueue();
+    return () => window.removeEventListener('online', syncOfflineQueue);
+  }, []);
 
   if (verificandoSessao) {
     const isDark = tema === 'dark';

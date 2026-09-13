@@ -1,197 +1,50 @@
-import { supabase } from './supabase'
-import { hojeBRT } from './dateBR'
-import type { Produto, Movimentacao, Venda, ItemVenda, Cliente, EntradaCaixa, Caixa, PedidoEntrega } from './store'
+import { supabase } from './supabase';
+import type { Caixa, Cliente, EntradaCaixa, ItemVenda, Movimentacao, PedidoCompra, PedidoEntrega, Produto, Venda } from './store';
 
-async function getUserId(): Promise<string | null> {
-  const { data } = await supabase.auth.getUser()
-  return data?.user?.id ?? null
-}
+type Row = Record<string, unknown>;
 
 async function userOrThrow(): Promise<string> {
-  const id = await getUserId()
-  if (!id) throw new Error('Sem usuário logado.')
-  return id
+  const { data } = await supabase.auth.getUser();
+  if (!data.user?.id) throw new Error('Sem usuário logado.');
+  return data.user.id;
 }
 
-// Helpers adicionados para garantir data válida
-function dataValidaOuHoje(value?: string | null): string {
-  if (!value) return hojeBRT()
-  const data = String(value).slice(0, 10)
-  return /^\d{4}-\d{2}-\d{2}$/.test(data) ? data : hojeBRT()
-}
+function check(error: { message: string } | null): void { if (error) throw new Error(error.message); }
 
-function dataValidaOuNull(value?: string | null): string | null {
-  if (!value) return null
-  const data = String(value).slice(0, 10)
-  return /^\d{4}-\d{2}-\d{2}$/.test(data) ? data : null
-}
+export type CargaRemota = { produtos: Produto[]; movimentacoes: Movimentacao[]; vendas: Venda[]; clientes: Cliente[]; caixaEntradas: EntradaCaixa[]; caixas: Caixa[]; entregas: PedidoEntrega[]; pedidosCompra: PedidoCompra[]; };
 
-function isoValidoOuAgora(value?: string | null): string {
-  if (!value) return new Date().toISOString()
-  const d = new Date(value)
-  return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString()
-}
-
-// -------- produtos --------
-function toRowProduto(p: Produto, userId: string, lojaId: string) {
+/** Lê uma loja inteira. O acesso de membros é garantido por RLS; nunca por user_id nesta consulta. */
+export async function carregarTudo(lojaId: string): Promise<CargaRemota> {
+  const results = await Promise.all(['produtos', 'movimentacoes', 'vendas', 'itens_venda', 'clientes', 'caixas', 'caixa_entradas', 'entregas', 'pedidos_compra', 'itens_pedido_compra'].map(table => supabase.from(table).select('*').eq('loja_id', lojaId)));
+  results.forEach(r => check(r.error));
+  const [p, m, v, iv, c, cx, ce, en, pc, ipc] = results.map(r => (r.data ?? []) as Row[]);
+  const by = <T>(rows: Row[], key: string, fn: (r: Row) => T): Map<string, T[]> => rows.reduce((map, r) => { const id = String(r[key]); map.set(id, [...(map.get(id) ?? []), fn(r)]); return map; }, new Map<string, T[]>());
+  const itensVenda = by<ItemVenda>(iv, 'venda_id', r => ({ produtoId: String(r.produto_id), quantidade: Number(r.quantidade), precoUnit: Number(r.preco_unit) }));
+  const itensPedido = by<PedidoCompra['itens'][number]>(ipc, 'pedido_id', r => ({ produtoId: String(r.produto_id), quantidade: Number(r.quantidade_solicitada), precoCusto: Number(r.preco_unit_custo) }));
   return {
-    id: p.id, user_id: userId, loja_id: lojaId,
-    sku: p.sku, nome: p.nome, barcode: p.barcode ?? null,
-    descricao: p.descricao ?? null, categoria: p.categoria ?? null,
-    fornecedor: p.fornecedor ?? null, lead_time: p.leadTime,
-    preco_compra: p.precoCompra, preco_venda: p.precoVenda,
-    imposto: p.imposto, frete: p.frete, comissao: p.comissao,
-    preco_competidor: p.precoCompetidor ?? null, margem_alvo: p.margemAlvo,
-    estoque: p.estoque, estoque_min: p.estoqueMin, ponto_pedido: p.pontoPedido,
-    qualidade: p.qualidade, imagem: p.imagem ?? null,
-    updated_at: new Date().toISOString(),
-  }
+    produtos: p.map(r => ({ id: String(r.id), sku: String(r.sku), nome: String(r.nome), barcode: r.barcode as string | undefined, descricao: r.descricao as string | undefined, categoria: r.categoria as string | undefined, fornecedor: r.fornecedor as string | undefined, leadTime: Number(r.lead_time), precoCompra: Number(r.preco_compra), precoVenda: Number(r.preco_venda), imposto: Number(r.imposto), frete: Number(r.frete), comissao: Number(r.comissao), precoCompetidor: r.preco_competidor == null ? undefined : Number(r.preco_competidor), margemAlvo: Number(r.margem_alvo), estoque: Number(r.estoque), estoqueMin: Number(r.estoque_min), pontoPedido: Number(r.ponto_pedido), qualidade: Number(r.qualidade), imagem: r.imagem as string | undefined, automaticQualityScore: r.automatic_quality_score == null ? undefined : Number(r.automatic_quality_score), automaticQualityLevel: r.automatic_quality_level == null ? undefined : Number(r.automatic_quality_level), confidenceScore: r.confidence_score == null ? undefined : Number(r.confidence_score) })),
+    movimentacoes: m.map(r => ({ id: String(r.id), produtoId: String(r.produto_id), tipo: r.tipo as Movimentacao['tipo'], quantidade: Number(r.quantidade), data: String(r.data), lote: r.lote as string | undefined, validade: r.validade as string | undefined, obs: r.obs as string | undefined })),
+    vendas: v.map(r => ({ id: String(r.id), data: String(r.data), clienteId: r.cliente_id as string | undefined, pagamento: String(r.pagamento), itens: itensVenda.get(String(r.id)) ?? [], total: Number(r.total), obs: r.obs as string | undefined, criadoEm: String(r.criado_em) })),
+    clientes: c.map(r => ({ id: String(r.id), nome: String(r.nome), telefone: r.telefone as string | undefined, limite: Number(r.limite), saldo: Number(r.saldo), compras: Number(r.compras), ultimaCobranca: r.ultima_cobranca as string | undefined })),
+    caixas: cx.map(r => ({ id: String(r.id), abertoEm: String(r.aberto_em), fechadoEm: r.fechado_em as string | undefined, faturamentoBruto: r.faturamento_bruto == null ? undefined : Number(r.faturamento_bruto), lucroLiquido: r.lucro_liquido == null ? undefined : Number(r.lucro_liquido), vendas: r.vendas == null ? undefined : Number(r.vendas) })),
+    caixaEntradas: ce.map(r => ({ tipo: r.tipo as EntradaCaixa['tipo'], pagamento: r.pagamento as string | undefined, valor: Number(r.valor), data: String(r.data), descricao: r.descricao as string | undefined, caixaId: r.caixa_id as string | undefined })),
+    entregas: en.map(r => ({ id: String(r.id), clienteNome: String(r.cliente_nome), telefone: r.telefone as string | undefined, endereco: String(r.endereco), itens: (r.itens ?? []) as ItemVenda[], total: Number(r.total), taxaEntrega: Number(r.taxa_entrega), pagamento: String(r.pagamento), status: r.status as PedidoEntrega['status'], entregadorId: r.entregador_id as string | undefined, entregadorNome: r.entregador_nome as string | undefined, data: String(r.data), criadoEm: String(r.criado_em), obs: r.obs as string | undefined, lat: r.lat == null ? undefined : Number(r.lat), lng: r.lng == null ? undefined : Number(r.lng) })),
+    pedidosCompra: pc.map(r => ({ id: String(r.id), fornecedorId: String(r.fornecedor_id), status: r.status as PedidoCompra['status'], itens: itensPedido.get(String(r.id)) ?? [], dataPedido: String(r.data_pedido), lojaId, recebidoEm: r.recebido_em as string | undefined })),
+  };
 }
 
-export async function upsertProduto(p: Produto, lojaId: string) {
-  const uid = await userOrThrow()
-  await supabase.from('produtos').upsert(toRowProduto(p, uid, lojaId))
-}
+function productData(p: Produto, user_id: string, loja_id: string) { return { id: p.id, user_id, loja_id, sku: p.sku, nome: p.nome, barcode: p.barcode, descricao: p.descricao, categoria: p.categoria, fornecedor: p.fornecedor, lead_time: p.leadTime, preco_compra: p.precoCompra, preco_venda: p.precoVenda, imposto: p.imposto, frete: p.frete, comissao: p.comissao, preco_competidor: p.precoCompetidor, margem_alvo: p.margemAlvo, estoque: p.estoque, estoque_min: p.estoqueMin, ponto_pedido: p.pontoPedido, qualidade: p.qualidade, imagem: p.imagem, automatic_quality_score: p.automaticQualityScore, automatic_quality_level: p.automaticQualityLevel, confidence_score: p.confidenceScore }; }
+export async function upsertProduto(p: Produto, lojaId: string) { const { error } = await supabase.from('produtos').upsert(productData(p, await userOrThrow(), lojaId)); check(error); }
+export async function deleteProduto(id: string, lojaId: string) { const { error } = await supabase.from('produtos').delete().eq('id', id).eq('loja_id', lojaId); check(error); }
+export async function insertMovimentacao(m: Movimentacao, lojaId: string) { const { error } = await supabase.from('movimentacoes').upsert({ id: m.id, user_id: await userOrThrow(), loja_id: lojaId, produto_id: m.produtoId, tipo: m.tipo, quantidade: m.quantidade, data: m.data, lote: m.lote, validade: m.validade, obs: m.obs }); check(error); }
+export async function deleteMovimentacao(id: string, lojaId: string) { const { error } = await supabase.from('movimentacoes').delete().eq('id', id).eq('loja_id', lojaId); check(error); }
+export async function upsertCliente(c: Cliente, lojaId: string) { const { error } = await supabase.from('clientes').upsert({ id: c.id, user_id: await userOrThrow(), loja_id: lojaId, nome: c.nome, telefone: c.telefone, limite: c.limite, saldo: c.saldo, compras: c.compras, ultima_cobranca: c.ultimaCobranca }); check(error); }
+export async function deleteCliente(id: string, lojaId: string) { const { error } = await supabase.from('clientes').delete().eq('id', id).eq('loja_id', lojaId); check(error); }
+export async function upsertCaixa(c: Caixa, lojaId: string) { const { error } = await supabase.from('caixas').upsert({ id: c.id, user_id: await userOrThrow(), loja_id: lojaId, aberto_em: c.abertoEm, fechado_em: c.fechadoEm, faturamento_bruto: c.faturamentoBruto, lucro_liquido: c.lucroLiquido, vendas: c.vendas }); check(error); }
+export async function insertCaixaEntrada(e: EntradaCaixa, lojaId: string) { const { error } = await supabase.from('caixa_entradas').insert({ user_id: await userOrThrow(), loja_id: lojaId, caixa_id: e.caixaId, tipo: e.tipo, pagamento: e.pagamento, valor: e.valor, data: e.data, descricao: e.descricao }); check(error); }
+export async function insertVenda(v: Venda, itens: ItemVenda[], lojaId: string) { const user_id = await userOrThrow(); const { error } = await supabase.from('vendas').upsert({ id: v.id, user_id, loja_id: lojaId, data: v.data, cliente_id: v.clienteId, pagamento: v.pagamento, total: v.total, obs: v.obs, criado_em: v.criadoEm }); check(error); if (!itens.length) return; const { error: itemError } = await supabase.from('itens_venda').upsert(itens.map(i => ({ user_id, loja_id: lojaId, venda_id: v.id, produto_id: i.produtoId, quantidade: i.quantidade, preco_unit: i.precoUnit })), { onConflict: 'venda_id,produto_id' }); check(itemError); }
+export async function upsertEntrega(e: PedidoEntrega, lojaId: string) { const { error } = await supabase.from('entregas').upsert({ id: e.id, user_id: await userOrThrow(), loja_id: lojaId, cliente_nome: e.clienteNome, telefone: e.telefone, endereco: e.endereco, itens: e.itens, total: e.total, taxa_entrega: e.taxaEntrega, pagamento: e.pagamento, status: e.status, entregador_id: e.entregadorId, entregador_nome: e.entregadorNome, data: e.data, criado_em: e.criadoEm, obs: e.obs, lat: e.lat, lng: e.lng }); check(error); }
+export async function upsertPedidoCompra(p: PedidoCompra, lojaId: string) { const user_id = await userOrThrow(); const { error } = await supabase.from('pedidos_compra').upsert({ id: p.id, user_id, loja_id: lojaId, fornecedor_id: p.fornecedorId, status: p.status, data_pedido: p.dataPedido, recebido_em: p.recebidoEm }); check(error); if (!p.itens.length) return; const { error: itemError } = await supabase.from('itens_pedido_compra').upsert(p.itens.map(i => ({ user_id, loja_id: lojaId, pedido_id: p.id, produto_id: i.produtoId, quantidade_solicitada: i.quantidade, preco_unit_custo: i.precoCusto })), { onConflict: 'pedido_id,produto_id' }); check(itemError); }
 
-export async function deleteProduto(id: string, lojaId: string) {
-  const uid = await userOrThrow()
-  await supabase.from('produtos').delete().eq('id', id).eq('user_id', uid).eq('loja_id', lojaId)
-}
-
-// -------- movimentacoes --------
-function toRowMov(m: Movimentacao, userId: string, lojaId: string) {
-  return {
-    id: m.id, user_id: userId, loja_id: lojaId,
-    produto_id: m.produtoId, tipo: m.tipo,
-    quantidade: m.quantidade, data: dataValidaOuHoje(m.data),
-    lote: m.lote ?? null, validade: dataValidaOuNull(m.validade), obs: m.obs ?? null,
-  }
-}
-
-export async function insertMovimentacao(m: Movimentacao, lojaId: string) {
-  const uid = await userOrThrow()
-  await supabase.from('movimentacoes').insert(toRowMov(m, uid, lojaId))
-}
-
-export async function deleteMovimentacao(id: string, lojaId: string) {
-  const uid = await userOrThrow()
-  await supabase.from('movimentacoes').delete().eq('id', id).eq('user_id', uid).eq('loja_id', lojaId)
-}
-
-// -------- clientes --------
-function toRowCliente(c: Cliente, userId: string, lojaId: string) {
-  return {
-    id: c.id, user_id: userId, loja_id: lojaId, nome: c.nome,
-    telefone: c.telefone ?? null, limite: c.limite,
-    saldo: c.saldo, compras: c.compras,
-    ultima_cobranca: dataValidaOuNull(c.ultimaCobranca),
-  }
-}
-
-export async function upsertCliente(c: Cliente, lojaId: string) {
-  const uid = await userOrThrow()
-  await supabase.from('clientes').upsert(toRowCliente(c, uid, lojaId))
-}
-
-export async function deleteCliente(id: string, lojaId: string) {
-  const uid = await userOrThrow()
-  await supabase.from('clientes').delete().eq('id', id).eq('user_id', uid).eq('loja_id', lojaId)
-}
-
-// -------- vendas + itens --------
-function toRowVenda(v: Venda, userId: string, lojaId: string) {
-  return {
-    id: v.id, user_id: userId, loja_id: lojaId,
-    data: dataValidaOuHoje(v.data), cliente_id: v.clienteId ?? null,
-    pagamento: v.pagamento, total: v.total,
-    obs: v.obs ?? null, criado_em: isoValidoOuAgora(v.criadoEm),
-  }
-}
-
-export async function insertVenda(v: Venda, itens: ItemVenda[], lojaId: string) {
-  const uid = await userOrThrow()
-  await supabase.from('vendas').upsert(toRowVenda(v, uid, lojaId))
-  if (itens.length) {
-    await supabase.from('itens_venda').insert(
-      itens.map(i => ({ user_id: uid, loja_id: lojaId, venda_id: v.id, produto_id: i.produtoId, quantidade: i.quantidade, preco_unit: i.precoUnit }))
-    )
-  }
-}
-
-// -------- caixa --------
-function toRowCaixa(c: Caixa, userId: string, lojaId: string) {
-  return {
-    id: c.id, user_id: userId, loja_id: lojaId,
-    aberto_em: isoValidoOuAgora(c.abertoEm), fechado_em: c.fechadoEm ? isoValidoOuAgora(c.fechadoEm) : null,
-    faturamento_bruto: c.faturamentoBruto ?? null,
-    lucro_liquido: c.lucroLiquido ?? null,
-    vendas: c.vendas ?? null,
-  }
-}
-
-export async function upsertCaixa(c: Caixa, lojaId: string) {
-  const uid = await userOrThrow()
-  await supabase.from('caixas').upsert(toRowCaixa(c, uid, lojaId))
-}
-
-function toRowCaixaEntrada(e: EntradaCaixa, userId: string, lojaId: string) {
-  return {
-    user_id: userId, loja_id: lojaId, caixa_id: e.caixaId ?? null,
-    tipo: e.tipo, pagamento: e.pagamento ?? null,
-    valor: e.valor, data: dataValidaOuHoje(e.data), descricao: e.descricao ?? null,
-  }
-}
-
-export async function insertCaixaEntrada(e: EntradaCaixa, lojaId: string) {
-  const uid = await userOrThrow()
-  await supabase.from('caixa_entradas').insert(toRowCaixaEntrada(e, uid, lojaId))
-}
-
-// -------- entregas --------
-function toRowEntrega(p: PedidoEntrega, userId: string, lojaId: string) {
-  return {
-    id: p.id, user_id: userId, loja_id: lojaId,
-    cliente_nome: p.clienteNome, total: p.total,
-    pagamento: p.pagamento, status: p.status,
-    data: dataValidaOuHoje(p.data), criado_em: isoValidoOuAgora(p.criadoEm),
-  }
-}
-
-export async function upsertEntrega(p: PedidoEntrega, lojaId: string) {
-  const uid = await userOrThrow()
-  await supabase.from('entregas').upsert(toRowEntrega(p, uid, lojaId))
-}
-
-// -------- Carga e Migração (simplificado) --------
-export type CargaRemota = {
-  produtos: Produto[]
-  movimentacoes: Movimentacao[]
-  vendas: Venda[]
-  clientes: Cliente[]
-  caixaEntradas: EntradaCaixa[]
-  caixas: Caixa[]
-  entregas: PedidoEntrega[]
-}
-
-export async function carregarTudo(lojaId: string): Promise<CargaRemota | null> {
-  const uid = await userOrThrow()
-  // Adicionado filtro por loja_id em todas as consultas
-  const [p, m, v, c, cx, ce, en] = await Promise.all([
-    supabase.from('produtos').select('*').eq('user_id', uid).eq('loja_id', lojaId),
-    supabase.from('movimentacoes').select('*').eq('user_id', uid).eq('loja_id', lojaId),
-    supabase.from('vendas').select('*').eq('user_id', uid).eq('loja_id', lojaId),
-    supabase.from('clientes').select('*').eq('user_id', uid).eq('loja_id', lojaId),
-    supabase.from('caixas').select('*').eq('user_id', uid).eq('loja_id', lojaId),
-    supabase.from('caixa_entradas').select('*').eq('user_id', uid).eq('loja_id', lojaId),
-    supabase.from('entregas').select('*').eq('user_id', uid).eq('loja_id', lojaId),
-  ])
-  
-  if (p.error || m.error || v.error || c.error || cx.error || ce.error || en.error) {
-    throw new Error('Falha ao carregar dados')
-  }
-  
-  return {
-    produtos: (p.data || []).map((r:any):Produto => ({id: r.id, sku: r.sku, nome: r.nome, estoque: r.estoque, precoCompra: Number(r.preco_compra), precoVenda: Number(r.preco_venda), imposto: Number(r.imposto), frete: Number(r.frete), comissao: Number(r.comissao), estoqueMin: r.estoque_min, pontoPedido: r.ponto_pedido, qualidade: r.qualidade, leadTime: r.lead_time, margemAlvo: Number(r.margem_alvo)})),
-    movimentacoes: [], vendas: [], clientes: [], caixaEntradas: [], caixas: [], entregas: [] // Mapear restante se necessário
-  }
-}
+const operations: Record<string, (...args: any[]) => Promise<void>> = { upsertProduto, deleteProduto, insertMovimentacao, deleteMovimentacao, upsertCliente, deleteCliente, upsertCaixa, insertCaixaEntrada, insertVenda, upsertEntrega, upsertPedidoCompra };
+export async function processarFilaSync(): Promise<void> { if (!navigator.onLine) return; const jobs = JSON.parse(localStorage.getItem('sync_queue') ?? '[]') as { opName: string; args: unknown[] }[]; const pending = []; for (const job of jobs) { const operation = operations[job.opName]; try { if (!operation) throw new Error('Operação de sync desconhecida'); await operation(...job.args); } catch { pending.push(job); } } localStorage.setItem('sync_queue', JSON.stringify(pending)); }
