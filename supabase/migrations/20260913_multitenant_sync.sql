@@ -11,6 +11,17 @@ alter table public.caixas add column if not exists loja_id text;
 alter table public.caixa_entradas add column if not exists loja_id text;
 alter table public.entregas add column if not exists loja_id text;
 
+-- Associa dados existentes à loja do proprietário. Sem este backfill, registros
+-- antigos com loja_id nulo não aparecem nas consultas por loja do aplicativo.
+update public.produtos destino set loja_id = perfil.loja_id from public.perfis perfil where destino.loja_id is null and destino.user_id = perfil.id;
+update public.movimentacoes destino set loja_id = perfil.loja_id from public.perfis perfil where destino.loja_id is null and destino.user_id = perfil.id;
+update public.clientes destino set loja_id = perfil.loja_id from public.perfis perfil where destino.loja_id is null and destino.user_id = perfil.id;
+update public.vendas destino set loja_id = perfil.loja_id from public.perfis perfil where destino.loja_id is null and destino.user_id = perfil.id;
+update public.itens_venda destino set loja_id = perfil.loja_id from public.perfis perfil where destino.loja_id is null and destino.user_id = perfil.id;
+update public.caixas destino set loja_id = perfil.loja_id from public.perfis perfil where destino.loja_id is null and destino.user_id = perfil.id;
+update public.caixa_entradas destino set loja_id = perfil.loja_id from public.perfis perfil where destino.loja_id is null and destino.user_id = perfil.id;
+update public.entregas destino set loja_id = perfil.loja_id from public.perfis perfil where destino.loja_id is null and destino.user_id = perfil.id;
+
 alter table public.produtos add column if not exists automatic_quality_score numeric;
 alter table public.produtos add column if not exists automatic_quality_level integer;
 alter table public.produtos add column if not exists confidence_score numeric;
