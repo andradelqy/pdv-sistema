@@ -6,6 +6,14 @@ Sistema web de ponto de venda (PDV) para adega/loja, com controle de caixa, vend
 
 O projeto foi desenvolvido com React, TypeScript, Vite e Zustand. Inicialmente os dados eram persistidos no `localStorage` do navegador. A aplicação agora também possui integração com Supabase para salvar as informações principais na nuvem, mantendo o `localStorage` como cache/fallback local.
 
+## Confiabilidade operacional
+
+- A confirmação de uma venda usa a função `confirmar_venda_atomica`: venda, itens, baixa de estoque, movimentação, caixa e auditoria são confirmados na mesma transação.
+- A fila offline guarda tentativas e a causa do último erro. O topo mostra `Sincronizado` ou a quantidade de alterações pendentes; clique nela para reenviar.
+- O identificador da venda é idempotente: reenviar uma venda pendente não duplica faturamento nem baixa estoque duas vezes.
+- Antes de publicar, execute também `supabase/migrations/20260915_confiabilidade_operacional.sql` no SQL Editor. Ela não apaga dados e cria a auditoria e a função transacional.
+- Use a tela **Backup** para exportar JSON completo ou planilhas CSV. O botão de limpar remove apenas o cache deste navegador, não registros do Supabase.
+
 Principais recursos:
 
 - Login com Supabase Auth
@@ -362,11 +370,15 @@ Vendas fiado aumentam o saldo do cliente. Quitações reduzem o saldo e registra
 As entregas possuem status:
 
 - `pendente`
+- `aceito`
 - `em_rota`
 - `entregue`
 - `cancelado`
+- `nao_entregue`
 
-Ao marcar uma entrega como entregue, o sistema pode gerar venda e entrada de caixa conforme a forma de pagamento.
+O estoque é reservado na criação do pedido. Ao cancelar uma entrega, o sistema devolve a reserva ao estoque e cria a movimentação de retorno. Ao marcar como entregue, o sistema gera a venda e a entrada de caixa conforme a forma de pagamento.
+
+O entregador logado aceita seus próprios pedidos, inicia a rota com GPS e informa quem recebeu a compra. A tela de rastreamento consulta apenas as posições da mesma `loja_id`; aplique a migração do diretório `supabase/migrations` no SQL Editor antes de utilizar o GPS.
 
 ## Backup local
 

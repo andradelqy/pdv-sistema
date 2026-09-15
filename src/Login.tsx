@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, type Variants } from 'motion/react';
 import { Link, useNavigate } from 'react-router-dom';
-import { supabase } from './lib/supabase';
+import { definirPersistenciaDaSessao, supabase } from './lib/supabase';
 import { FaUser, FaLock } from 'react-icons/fa';
 
 // ----------------------------------------------------------------------
@@ -203,6 +203,7 @@ export function Login() {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
+  const [lembrarSessao, setLembrarSessao] = useState(false);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState('');
 
@@ -210,6 +211,7 @@ export function Login() {
     e.preventDefault();
     setCarregando(true);
     setErro('');
+    definirPersistenciaDaSessao(lembrarSessao);
 
     const { error } = await supabase.auth.signInWithPassword({
       email: email.trim(),
@@ -348,7 +350,7 @@ const leftVariants: Variants = {
                   <input
                     id="email"
                     type="email"
-                    className="w-full pl-10 pr-4 py-3.5 border border-gray-200/50 rounded-xl shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#00A3C4] focus:border-transparent bg-white/80 backdrop-blur-md transition-shadow sm:text-sm"
+                    className="w-full pl-10 pr-4 py-3.5 border border-gray-200/50 rounded-xl shadow-sm text-[#1F2937] caret-[#1F2937] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#00A3C4] focus:border-transparent bg-white/80 backdrop-blur-md transition-shadow sm:text-sm"
                     placeholder="Digite seu e-mail"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
@@ -366,7 +368,7 @@ const leftVariants: Variants = {
                   <input
                     id="password"
                     type="password"
-                    className="w-full pl-10 pr-4 py-3.5 border border-gray-200/50 rounded-xl shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#00A3C4] focus:border-transparent bg-white/80 backdrop-blur-md transition-shadow sm:text-sm"
+                    className="w-full pl-10 pr-4 py-3.5 border border-gray-200/50 rounded-xl shadow-sm text-[#1F2937] caret-[#1F2937] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#00A3C4] focus:border-transparent bg-white/80 backdrop-blur-md transition-shadow sm:text-sm"
                     placeholder="••••••••"
                     value={senha}
                     onChange={(e) => setSenha(e.target.value)}
@@ -375,21 +377,18 @@ const leftVariants: Variants = {
                 </div>
               </motion.div>
 
-              <motion.div variants={itemVariants} className="flex items-center justify-between mt-6">
+              <motion.div variants={itemVariants} className="flex items-center mt-6">
                 <div className="flex items-center">
                   <input
                     id="remember-me"
                     type="checkbox"
                     className="h-4 w-4 text-[#00A3C4] focus:ring-[#00A3C4] border-gray-300 rounded bg-white/50"
+                    checked={lembrarSessao}
+                    onChange={(event) => setLembrarSessao(event.target.checked)}
                   />
                   <label htmlFor="remember-me" className="ml-2 block text-sm font-medium text-[#1F2937]">
                     Lembrar-me
                   </label>
-                </div>
-                <div className="text-sm">
-                  <a href="#" className="font-semibold text-[#6B7280] hover:text-[#00A3C4] transition-colors">
-                    Esqueceu sua senha?
-                  </a>
                 </div>
               </motion.div>
 

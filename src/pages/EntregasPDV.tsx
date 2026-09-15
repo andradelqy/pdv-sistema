@@ -294,6 +294,7 @@ export function EntregasPDV() {
           const p = produtos.find(x => x.id === i.produtoId)!
           return {
             produtoId: i.produtoId,
+            produtoNome: p.nome,
             quantidade: i.quantidade,
             precoUnit: p.precoVenda * (1 - i.descontoPercentual / 100),
           }
@@ -317,18 +318,38 @@ export function EntregasPDV() {
             pagamento,
           },
         })
-      } catch (_) {}
+      } catch (_error) {
+        // O pedido já foi persistido; o broadcast é somente uma otimização.
+        void _error
+      }
 
       toast('Pedido de entrega lançado com sucesso!', 'success')
       limparPedido()
     } catch (error) {
-      toast('Erro ao criar pedido', 'danger')
+      toast(error instanceof Error ? `Erro ao criar pedido: ${error.message}` : 'Erro ao criar pedido', 'danger')
     } finally {
       setDespachando(false)
     }
   }
 
-  const entregasAbertas = entregas.filter(e => e.status === 'pendente' || e.status === 'em_rota')
+  const entregasAbertas = entregas.filter(e => ['pendente', 'aceito', 'em_rota', 'nao_entregue'].includes(e.status))
+  const indicadoresEntrega = useMemo(() => {
+    const concluidas = entregas.filter(e => e.status === 'entregue')
+    const canceladas = entregas.filter(e => e.status === 'cancelado')
+    const duracoes = concluidas.flatMap(e => e.emRotaEm && e.entregueEm ? [(new Date(e.entregueEm).getTime() - new Date(e.emRotaEm).getTime()) / 60_000] : [])
+    return {
+      concluidas: concluidas.length,
+      canceladas: canceladas.length,
+      emRota: entregas.filter(e => e.status === 'em_rota').length,
+      tempoMedio: duracoes.length ? Math.round(duracoes.reduce((s, v) => s + v, 0) / duracoes.length) : null,
+    }
+  }, [entregas])
+  const cancelarEntrega = (id: string) => {
+    const motivo = window.prompt('Motivo do cancelamento (obrigatório):')
+    if (!motivo?.trim()) return
+    updateStatusEntrega(id, 'cancelado', { motivo: motivo.trim() })
+    toast('Entrega cancelada e estoque devolvido.', 'success')
+  }
 
   // Renderização do conteúdo de cada passo com animação de fade+slide
   const renderStepContent = () => {
@@ -648,6 +669,13 @@ export function EntregasPDV() {
         </div>
       </div>
 
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="card-adega p-3"><p className="text-xs text-muted-foreground">Em rota</p><b className="text-xl">{indicadoresEntrega.emRota}</b></div>
+        <div className="card-adega p-3"><p className="text-xs text-muted-foreground">Concluídas</p><b className="text-xl text-emerald-600">{indicadoresEntrega.concluidas}</b></div>
+        <div className="card-adega p-3"><p className="text-xs text-muted-foreground">Canceladas</p><b className="text-xl text-rose-600">{indicadoresEntrega.canceladas}</b></div>
+        <div className="card-adega p-3"><p className="text-xs text-muted-foreground">Tempo médio em rota</p><b className="text-xl">{indicadoresEntrega.tempoMedio == null ? '—' : `${indicadoresEntrega.tempoMedio} min`}</b></div>
+      </div>
+
       {/* Grid Principal */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Coluna 1: Seleção de Produtos */}
@@ -810,26 +838,30 @@ export function EntregasPDV() {
                     <td className="font-bold text-sm text-primary">{fmtR(e.total)}</td>
                     <td><span className="badge-adega badge-info text-xs">{e.pagamento}</span></td>
                     <td>
-                      <span className={`badge-adega ${e.status === 'em_rota' ? 'badge-warning' : 'badge-secondary'}`}>
-                        {e.status === 'em_rota' ? '🛵 Em Rota' : '🕒 Pendente'}
+                      <span className={`badge-adega ${e.status === 'em_rota' ? 'badge-warning' : e.status === 'nao_entregue' ? 'badge-danger' : 'badge-secondary'}`}>
+                        {e.status === 'pendente' && '🕒 Pendente'}
+                        {e.status === 'aceito' && '📦 Aceito'}
+                        {e.status === 'em_rota' && '🛵 Em rota'}
+                        {e.status === 'nao_entregue' && '⚠ Não entregue'}
                       </span>
                     </td>
                     <td className="text-xs">{e.entregadorNome || <span className="text-muted-foreground">Aguardando</span>}</td>
                     <td className="flex items-center gap-1">
-                      {e.status !== 'em_rota' && (
+                      {e.status === 'aceito' && (
                         <button
                           onClick={() => updateStatusEntrega(e.id, 'em_rota')}
                           className="px-2 py-1 bg-amber-500 hover:bg-amber-600 active:scale-95 transition-all text-white text-xs rounded font-medium"
                         >
-                          Despachar
+                          Iniciar rota
                         </button>
                       )}
-                      <button
+                      {e.status === 'em_rota' && <button
                         onClick={() => updateStatusEntrega(e.id, 'entregue')}
                         className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition-all text-white text-xs rounded font-medium flex items-center gap-1"
                       >
                         <CheckCheck size={12} /> Entregue
-                      </button>
+                      </button>}
+                      {e.status !== 'entregue' && <button onClick={() => cancelarEntrega(e.id)} className="px-2 py-1 border border-rose-500 text-rose-600 text-xs rounded font-medium">Cancelar</button>}
                     </td>
                   </tr>
                 ))

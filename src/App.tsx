@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import type { Session } from '@supabase/supabase-js';
 import {
@@ -7,21 +7,20 @@ import {
 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { useStore } from './lib/store';
-import { carregarTudo, processarFilaSync } from './lib/sync';
+import { carregarTudo, getSyncQueueStatus, processarFilaSync, subscribeSyncQueueStatus, type SyncQueueStatus } from './lib/sync';
 import { ToastProvider } from './lib/toast';
 import { Login } from './Login';
-import { Dashboard } from './pages/Dashboard';
-// UserManagement removido
-import { PDV } from './pages/PDV';
-import { EntregasPDV } from './pages/EntregasPDV';
-import { Produtos } from './pages/Produtos';
-import { Movimentacoes } from './pages/Movimentacoes';
-import { Compras } from './pages/Compras';
-import { Clientes } from './pages/Clientes';
-import { Analises } from './pages/Analises';
-import { PontoEletronico } from './PontoEletronico';
-import { AppEntregador } from './AppEntregador';
-import { PainelMapa } from './PainelMapa';
+const Dashboard = lazy(() => import('./pages/Dashboard').then(module => ({ default: module.Dashboard })));
+const PDV = lazy(() => import('./pages/PDV').then(module => ({ default: module.PDV })));
+const EntregasPDV = lazy(() => import('./pages/EntregasPDV').then(module => ({ default: module.EntregasPDV })));
+const Produtos = lazy(() => import('./pages/Produtos').then(module => ({ default: module.Produtos })));
+const Movimentacoes = lazy(() => import('./pages/Movimentacoes').then(module => ({ default: module.Movimentacoes })));
+const Compras = lazy(() => import('./pages/Compras').then(module => ({ default: module.Compras })));
+const Clientes = lazy(() => import('./pages/Clientes').then(module => ({ default: module.Clientes })));
+const Analises = lazy(() => import('./pages/Analises').then(module => ({ default: module.Analises })));
+const PontoEletronico = lazy(() => import('./PontoEletronico').then(module => ({ default: module.PontoEletronico })));
+const AppEntregador = lazy(() => import('./AppEntregador').then(module => ({ default: module.AppEntregador })));
+const PainelMapa = lazy(() => import('./PainelMapa').then(module => ({ default: module.PainelMapa })));
 import { Termos } from './pages/Termos';
 import { Privacidade } from './pages/Privacidade';
 
@@ -42,6 +41,17 @@ const titles: Record<Page, string> = {
   dashboard: 'Dashboard', pdv: 'Ponto de Venda', entregas_pdv: 'PDV Entregas', ponto: 'Ponto Eletrônico', entregador: 'App do Entregador', mapa: 'Rastreamento de Entregas', produtos: 'Produtos', movimentacoes: 'Movimentações', compras: 'Compras', clientes: 'Clientes', caixa: 'Caixa', historico: 'Histórico de Vendas', abc: 'Curva ABC', qpr: 'Matriz QPR', alertas: 'Alertas', backup: 'Backup'
 };
 
+const paginasPorPapel: Record<'owner' | 'gerente' | 'atendente' | 'entregador', Page[]> = {
+  owner: nav.flatMap(group => group.items.map(item => item.page)),
+  gerente: nav.flatMap(group => group.items.map(item => item.page)),
+  atendente: ['pdv', 'entregas_pdv', 'historico', 'clientes'],
+  entregador: ['entregador', 'mapa'],
+};
+
+function paginaInicialDoPapel(role?: keyof typeof paginasPorPapel): Page {
+  return role === 'entregador' ? 'entregador' : role === 'atendente' ? 'pdv' : 'dashboard';
+}
+
 // ============ SIDEBAR ============
 
 function Sidebar({
@@ -52,7 +62,8 @@ function Sidebar({
   tema,
   toggleTema,
   alertas,
-  entregasPendentes
+  entregasPendentes,
+  role,
 }: {
   page: Page;
   setPage: (p: Page) => void;
@@ -62,8 +73,13 @@ function Sidebar({
   toggleTema: () => void;
   alertas: number;
   entregasPendentes: number;
+  role?: 'owner' | 'gerente' | 'atendente' | 'entregador';
 }) {
   const isDark = tema === 'dark';
+  const paginasPermitidas = role ? paginasPorPapel[role] : nav.flatMap(group => group.items.map(item => item.page));
+  const navegacaoVisivel = nav
+    .filter(group => group.items.some(item => paginasPermitidas.includes(item.page)))
+    .map(group => ({ ...group, items: group.items.filter(item => paginasPermitidas.includes(item.page)) }));
 
   return (
     <>
@@ -106,7 +122,7 @@ function Sidebar({
               }
             `}
           </style>
-          {nav.map((group) => (
+          {navegacaoVisivel.map((group) => (
             <div key={group.group}>
               <h3 className={`px-3 text-xs font-semibold uppercase tracking-wider mb-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
                 {group.group}
@@ -205,6 +221,10 @@ function Topbar({
   tema: 'light' | 'dark';
 }) {
   const isDark = tema === 'dark';
+  const [syncStatus, setSyncStatus] = useState<SyncQueueStatus>(() => getSyncQueueStatus());
+
+  useEffect(() => subscribeSyncQueueStatus(setSyncStatus), []);
+  const sincronizarAgora = () => { void processarFilaSync().then(setSyncStatus); };
   return (
     <header className={`
       flex items-center justify-between h-16 px-4 border-b flex-shrink-0
@@ -224,6 +244,13 @@ function Topbar({
         )}
       </div>
       <div className="flex items-center gap-2">
+        <button
+          onClick={sincronizarAgora}
+          title={syncStatus.pending ? `${syncStatus.pending} alteração(ões) aguardando sincronização` : 'Dados sincronizados'}
+          className={`hidden sm:inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${syncStatus.pending ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'}`}
+        >
+          {syncStatus.pending ? `${syncStatus.pending} pendente${syncStatus.pending > 1 ? 's' : ''}` : 'Sincronizado'}
+        </button>
         <span className={`text-xs hidden md:block ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
           {new Date().toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' })}
         </span>
@@ -239,12 +266,18 @@ function AppContent() {
   const [verificandoSessao, setVerificandoSessao] = useState(true);
   const [page, setPage] = useState<Page>('dashboard');
   const [menuOpen, setMenuOpen] = useState(false);
-  const { tema, toggleTema, produtos, entregas, caixaAberto, hydrateFromRemote } = useStore();
+  const { tema, toggleTema, produtos, entregas, caixaAberto, hydrateFromRemote, currentRole } = useStore();
   const location = useLocation();
 
   const alertas = produtos.filter(p => p.estoque <= p.estoqueMin).length;
   const entregasPendentes = entregas.filter(e => e.status === 'pendente').length;
-  const pageBlocked = !caixaAberto && (page === 'pdv' || page === 'entregas_pdv' || page === 'entregador');
+  const pageBlocked = !caixaAberto && (page === 'pdv' || page === 'entregas_pdv');
+
+  useEffect(() => {
+    if (!currentRole || paginasPorPapel[currentRole].includes(page)) return;
+    const redirect = window.setTimeout(() => setPage(paginaInicialDoPapel(currentRole)), 0);
+    return () => window.clearTimeout(redirect);
+  }, [currentRole, page]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', tema === 'dark');
@@ -256,7 +289,7 @@ function AppContent() {
         try {
           const { data: perfil, error: perfilError } = await supabase.from('perfis').select('*').eq('id', data.session.user.id).single();
           if (perfilError || !perfil?.loja_id) throw new Error(perfilError?.message || 'Perfil sem loja_id configurado.');
-          useStore.getState().setRole(perfil.role, perfil.loja_id);
+          useStore.getState().setRole(perfil.role, perfil.loja_id, { id: data.session.user.id, nome: perfil.nome || perfil.email || data.session.user.email || 'Usuário' });
           const remoto = await carregarTudo(perfil.loja_id);
           hydrateFromRemote(remoto);
         } catch (error) { console.error('Falha ao carregar remoto:', error); }
@@ -269,7 +302,7 @@ function AppContent() {
         try {
           const { data: perfil, error: perfilError } = await supabase.from('perfis').select('*').eq('id', value.user.id).single();
           if (perfilError || !perfil?.loja_id) throw new Error(perfilError?.message || 'Perfil sem loja_id configurado.');
-          useStore.getState().setRole(perfil.role, perfil.loja_id);
+          useStore.getState().setRole(perfil.role, perfil.loja_id, { id: value.user.id, nome: perfil.nome || perfil.email || value.user.email || 'Usuário' });
           const remoto = await carregarTudo(perfil.loja_id);
           hydrateFromRemote(remoto);
         } catch (error) { console.error('Falha ao carregar remoto:', error); }
@@ -339,11 +372,14 @@ function AppContent() {
           toggleTema={toggleTema}
           alertas={alertas}
           entregasPendentes={entregasPendentes}
+          role={currentRole}
         />
         <div className="flex-1 flex flex-col h-full overflow-hidden lg:ml-64">
           <Topbar page={page} setMenuOpen={setMenuOpen} tema={tema} />
           <main className={`flex-1 overflow-y-auto p-4 md:p-6 ${isDark ? 'bg-black' : 'bg-white'}`}>
-            {pageBlocked ? <Analises tipo="caixa" /> : content}
+            <Suspense fallback={<div className="grid min-h-48 place-items-center text-sm text-muted-foreground">Carregando módulo…</div>}>
+              {pageBlocked ? <Analises tipo="caixa" /> : content}
+            </Suspense>
           </main>
         </div>
       </div>

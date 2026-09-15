@@ -1,4 +1,4 @@
-import { useState, useCallback, type ReactNode } from 'react'
+import { useState, useCallback, useEffect, type ReactNode } from 'react'
 import { CheckCircle, XCircle, AlertTriangle } from 'lucide-react'
 
 type ToastType = 'success' | 'danger' | 'warning'
@@ -17,7 +17,7 @@ toast.custom = (render: ReactNode, opts?: { duration?: number }) => {
   if (opts?.duration) setTimeout(() => toast.dismiss(0), opts.duration)
 }
 
-toast.dismiss = (_id: number) => {}
+toast.dismiss = (_id: number) => { void _id }
 
 export function ToastProvider() {
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -28,7 +28,10 @@ export function ToastProvider() {
     setTimeout(() => setToasts(prev => prev.filter(x => x.id !== t.id)), 3500)
   }, [])
 
-  _add = add
+  useEffect(() => {
+    _add = add
+    return () => { _add = null }
+  }, [add])
 
   return (
     <div className="toast-wrap">

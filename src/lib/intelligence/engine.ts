@@ -544,22 +544,17 @@ function calcularEstoqueMaximo(params: {
     return safetyStock;
   }
 
-  let coberturaDias = 30;
-
-  if (abcClass === 'A') {
-    coberturaDias = 21;
-  } else if (abcClass === 'B') {
-    coberturaDias = 30;
-  } else {
-    coberturaDias = 45;
-  }
+  const coberturaBase = abcClass === 'A'
+    ? 21
+    : abcClass === 'B'
+      ? 30
+      : 45;
 
   /**
    * Produtos importantes podem ter um horizonte um pouco
    * maior para reduzir risco operacional.
    */
-  coberturaDias +=
-    Math.max(0, importanceLevel - 3) * 3;
+  const coberturaDias = coberturaBase + Math.max(0, importanceLevel - 3) * 3;
 
   return Math.max(
     safetyStock,

@@ -59,8 +59,21 @@ export function Produtos() {
 
   function salvar() {
     const f = form as Produto
-    if (!f.sku || !f.nome || f.precoCompra <= 0 || f.precoVenda <= 0) {
+    if (!f.sku.trim() || !f.nome.trim() || f.precoCompra <= 0 || f.precoVenda <= 0) {
       toast('Preencha SKU, Nome, Custo e Venda', 'warning'); return
+    }
+    if (!Number.isFinite(f.estoque) || f.estoque < 0 || !Number.isFinite(f.leadTime) || f.leadTime < 0) {
+      toast('Estoque e lead time devem ser valores válidos e não negativos.', 'warning'); return
+    }
+    if (produtos.some(p => p.id !== editId && p.sku.trim().toLowerCase() === f.sku.trim().toLowerCase())) {
+      toast('Já existe um produto com este SKU.', 'warning'); return
+    }
+    const barcode = f.barcode?.trim()
+    if (barcode && produtos.some(p => p.id !== editId && p.barcode?.trim() === barcode)) {
+      toast('Já existe um produto com este código de barras.', 'warning'); return
+    }
+    if (f.produtoEstoqueOrigemId === editId) {
+      toast('Um produto não pode consumir o próprio estoque.', 'warning'); return
     }
     if (f.precoVenda < f.precoCompra) {
       toast('Preço de venda menor que custo', 'warning'); return

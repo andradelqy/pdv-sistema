@@ -50,6 +50,8 @@ export type ItemVenda = {
   produtoId: string
   quantidade: number
   precoUnit: number
+  /** Foto textual do item no momento da venda; preserva o histórico após renomear/excluir produto. */
+  produtoNome?: string
 }
 
 export type Venda = {
@@ -103,12 +105,11 @@ function hoje() {
 // Em caso de falha de rede/auth, enfileira a operação no localStorage
 // para tentar novamente depois.
 // Helper que aguenta o formato novo (com nomes/args) ou antigo (função simples)
-function trySync(opName: string, args: any[], syncFn: (...args: any[]) => Promise<void>) {
-  syncFn(...args).catch((e: any) => {
-    console.warn(`[sync] falhou: ${opName}`, e?.message || e)
-    const queue = JSON.parse(localStorage.getItem('sync_queue') || '[]')
-    queue.push({ opName, args, timestamp: Date.now() })
-    localStorage.setItem('sync_queue', JSON.stringify(queue))
+function trySync<Args extends unknown[]>(opName: string, args: Args, syncFn: (...args: Args) => Promise<void>) {
+  syncFn(...args).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn(`[sync] falhou: ${opName}`, message)
+    sync.enfileirarSync(opName, args, error)
   })
 }
 
@@ -121,7 +122,7 @@ export type PedidoEntrega = {
   total: number
   taxaEntrega: number
   pagamento: string
-  status: 'pendente' | 'em_rota' | 'entregue' | 'cancelado'
+  status: 'pendente' | 'aceito' | 'em_rota' | 'entregue' | 'cancelado' | 'nao_entregue'
   entregadorId?: string
   entregadorNome?: string
   data: string
@@ -129,6 +130,15 @@ export type PedidoEntrega = {
   obs?: string
   lat?: number
   lng?: number
+  aceitoEm?: string
+  emRotaEm?: string
+  entregueEm?: string
+  canceladoEm?: string
+  canceladoMotivo?: string
+  naoEntregueEm?: string
+  naoEntregueMotivo?: string
+  recebedorNome?: string
+  codigoConfirmacao?: string
 }
 
 export type PedidoCompra = {
@@ -197,6 +207,7 @@ type Store = {
    entregas: PedidoEntrega[]
    pedidosCompra: PedidoCompra[]
    currentRole?: 'owner' | 'gerente' | 'atendente' | 'entregador'
+   currentUser?: { id: string; nome: string }
    lojaId: string
    tema: 'light' | 'dark'
 
@@ -218,7 +229,7 @@ type Store = {
    quitarFiado: (clienteId: string, valor: number, formaPagamento: string) => void
 
    addEntrega: (p: Omit<PedidoEntrega, 'id' | 'status' | 'criadoEm' | 'data'>) => string
-    updateStatusEntrega: (id: string, status: PedidoEntrega['status'], entregador?: { id: string; nome: string }) => void
+    updateStatusEntrega: (id: string, status: PedidoEntrega['status'], options?: { entregador?: { id: string; nome: string }; motivo?: string; recebedorNome?: string; codigoConfirmacao?: string }) => void
     
     addPedidoCompra: (p: PedidoCompra) => void
     atualizarStatusPedidoCompra: (id: string, status: PedidoCompra['status']) => void
@@ -228,7 +239,7 @@ type Store = {
    resetDemo: () => void
    clearAll: () => void
    hydrateFromRemote: (data: sync.CargaRemota) => void
-   setRole: (role: any, lojaId: string) => void
+   setRole: (role: 'owner' | 'gerente' | 'atendente' | 'entregador', lojaId: string, user?: { id: string; nome: string }) => void
  }
 
 const DEMO_PRODUTOS: Omit<Produto, 'id'>[] = [
@@ -289,9 +300,10 @@ export const useStore = create<Store>()(
 
       addVenda: (v) => {
         const venda: Venda = { ...v, id: uid(), criadoEm: new Date().toISOString() }
+        const caixaId = useStore.getState().caixaAberto?.id
+        if (!caixaId) return
         set(s => {
           const consumo = consumoEstoque(v.itens, s.produtos)
-          if (!s.caixaAberto) return s
           const produtosComEstoque = s.produtos.map(p => {
             const quantidade = consumo.get(p.id)
             if (!quantidade) return p
@@ -299,7 +311,6 @@ export const useStore = create<Store>()(
             return { ...p, estoque: novoEstoque }
           })
           const prods = recalcularPoliticaEstoque(produtosComEstoque, [...s.vendas, venda], s.pedidosCompra)
-          prods.filter((p, index) => p !== s.produtos[index]).forEach(p => trySync('upsertProduto', [p, useStore.getState().lojaId], sync.upsertProduto))
           const clientes = v.clienteId && v.pagamento === 'fiado'
             ? s.clientes.map(c => c.id === v.clienteId
                 ? { ...c, saldo: c.saldo + v.total, compras: c.compras + 1 }
@@ -307,7 +318,7 @@ export const useStore = create<Store>()(
             : s.clientes
           const caixaEntradas = v.pagamento !== 'fiado'
             ? [...s.caixaEntradas, {
-                tipo: 'venda' as const, pagamento: v.pagamento, valor: v.total, data: hoje(), descricao: `Venda ${v.pagamento}`, caixaId: s.caixaAberto.id
+                tipo: 'venda' as const, pagamento: v.pagamento, valor: v.total, data: hoje(), descricao: `Venda ${v.pagamento}`, caixaId
               }]
             : s.caixaEntradas
           const movimentacoes = [...s.movimentacoes, ...v.itens.map(item => ({
@@ -316,22 +327,10 @@ export const useStore = create<Store>()(
           }))]
           return { vendas: [...s.vendas, venda], produtos: prods, clientes, caixaEntradas, movimentacoes }
         })
-        // Write-through
-        trySync('insertVenda', [venda, v.itens, useStore.getState().lojaId], sync.insertVenda)
-        
-        if (v.pagamento !== 'fiado') {
-          trySync('insertCaixaEntrada', [{
-            tipo: 'venda', pagamento: v.pagamento, valor: v.total,
-            data: hoje(), descricao: `Venda ${v.pagamento}`,
-            caixaId: useStore.getState().caixaAberto?.id,
-          }, useStore.getState().lojaId], sync.insertCaixaEntrada)
-        }
-        v.itens.forEach(item => {
-          trySync('insertMovimentacao', [{
-            id: uid(), produtoId: item.produtoId, tipo: 'saida',
-            quantidade: item.quantidade, data: v.data, obs: `Venda ${v.pagamento}`,
-          }, useStore.getState().lojaId], sync.insertMovimentacao)
-        })
+        // Uma chamada no banco grava venda, itens, estoque, caixa e auditoria em
+        // uma transação. Em caso de offline, a própria venda é reenviada com o
+        // mesmo id e não é duplicada.
+        trySync('confirmarVendaAtomica', [venda, caixaId, useStore.getState().lojaId], sync.confirmarVendaAtomica)
       },
 
       addCliente: (c) => {
@@ -465,10 +464,12 @@ export const useStore = create<Store>()(
         return id
       },
 
-      updateStatusEntrega: (id, status, entregador) => {
+      updateStatusEntrega: (id, status, options) => {
         let novaVendaGerada: Venda | null = null
         let entradaCaixaGerada: EntradaCaixa | null = null
         let entregaAtualizada: PedidoEntrega | null = null
+        let movimentacoesDevolucao: Movimentacao[] = []
+        let produtosParaSincronizar: Produto[] = []
 
         set(s => {
           const entrega = s.entregas.find(e => e.id === id)
@@ -477,8 +478,17 @@ export const useStore = create<Store>()(
           entregaAtualizada = {
             ...entrega,
             status,
-            entregadorId: entregador?.id ?? entrega.entregadorId,
-            entregadorNome: entregador?.nome ?? entrega.entregadorNome,
+            entregadorId: options?.entregador?.id ?? entrega.entregadorId,
+            entregadorNome: options?.entregador?.nome ?? entrega.entregadorNome,
+            aceitoEm: status === 'aceito' && entrega.status !== 'aceito' ? new Date().toISOString() : entrega.aceitoEm,
+            emRotaEm: status === 'em_rota' && entrega.status !== 'em_rota' ? new Date().toISOString() : entrega.emRotaEm,
+            entregueEm: status === 'entregue' && entrega.status !== 'entregue' ? new Date().toISOString() : entrega.entregueEm,
+            canceladoEm: status === 'cancelado' && entrega.status !== 'cancelado' ? new Date().toISOString() : entrega.canceladoEm,
+            canceladoMotivo: status === 'cancelado' ? options?.motivo ?? entrega.canceladoMotivo : entrega.canceladoMotivo,
+            naoEntregueEm: status === 'nao_entregue' && entrega.status !== 'nao_entregue' ? new Date().toISOString() : entrega.naoEntregueEm,
+            naoEntregueMotivo: status === 'nao_entregue' ? options?.motivo ?? entrega.naoEntregueMotivo : entrega.naoEntregueMotivo,
+            recebedorNome: options?.recebedorNome ?? entrega.recebedorNome,
+            codigoConfirmacao: options?.codigoConfirmacao ?? entrega.codigoConfirmacao,
           }
 
           const entregasAtualizadas = s.entregas.map(e =>
@@ -488,6 +498,23 @@ export const useStore = create<Store>()(
           // Se foi entregue, lança venda liquidada e entrada no caixa
           let vendas = s.vendas
           let caixaEntradas = s.caixaEntradas
+          let movimentacoes = s.movimentacoes
+          let produtosBase = s.produtos
+
+          // O estoque é reservado na criação. Ao cancelar antes da conclusão,
+          // devolvemos exatamente a reserva e mantemos uma trilha auditável.
+          if (status === 'cancelado' && entrega.status !== 'cancelado' && entrega.status !== 'entregue') {
+            const devolucao = consumoEstoque(entrega.itens, s.produtos)
+            produtosBase = s.produtos.map(produto => {
+              const quantidade = devolucao.get(produto.id)
+              return quantidade ? { ...produto, estoque: produto.estoque + quantidade } : produto
+            })
+            movimentacoesDevolucao = entrega.itens.map(item => ({
+              id: uid(), produtoId: item.produtoId, tipo: 'entrada', quantidade: item.quantidade,
+              data: hoje(), obs: `Cancelamento da entrega #${id.slice(-4)}${options?.motivo ? `: ${options.motivo}` : ''}`,
+            }))
+            movimentacoes = [...movimentacoes, ...movimentacoesDevolucao]
+          }
 
           if (status === 'entregue' && entrega.status !== 'entregue') {
             if (!s.caixaAberto) return s
@@ -514,19 +541,23 @@ export const useStore = create<Store>()(
             }
           }
 
-          const produtos = novaVendaGerada
-            ? recalcularPoliticaEstoque(s.produtos, vendas, s.pedidosCompra)
-            : s.produtos
+          const produtos = novaVendaGerada || movimentacoesDevolucao.length
+            ? recalcularPoliticaEstoque(produtosBase, vendas, s.pedidosCompra)
+            : produtosBase
+          produtosParaSincronizar = produtos
 
           return {
             entregas: entregasAtualizadas,
             vendas,
             caixaEntradas,
+            movimentacoes,
             produtos,
           }
         })
 
         if (entregaAtualizada) trySync('upsertEntrega', [entregaAtualizada as PedidoEntrega, useStore.getState().lojaId], sync.upsertEntrega)
+        movimentacoesDevolucao.forEach(mov => trySync('insertMovimentacao', [mov, useStore.getState().lojaId], sync.insertMovimentacao))
+        if (movimentacoesDevolucao.length) produtosParaSincronizar.forEach(produto => trySync('upsertProduto', [produto, useStore.getState().lojaId], sync.upsertProduto))
         if (novaVendaGerada) {
           const venda = novaVendaGerada as Venda
           trySync('insertVenda', [venda, venda.itens, useStore.getState().lojaId], sync.insertVenda)
@@ -560,7 +591,7 @@ export const useStore = create<Store>()(
          pedidosCompra: data.pedidosCompra,
          caixaAberto: data.caixas.find(c => !c.fechadoEm),
        })),
-       setRole: (role, lojaId) => set({ currentRole: role, lojaId }),
+       setRole: (role, lojaId, user) => set({ currentRole: role, lojaId, currentUser: user }),
        
        addPedidoCompra: (p) => {
          set(s => ({ pedidosCompra: [...s.pedidosCompra, p] }))

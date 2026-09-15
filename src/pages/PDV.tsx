@@ -758,7 +758,7 @@ export function PDV() {
 
     const itensVenda = carrinho.map(item => {
       const produto = produtos.find(p => p.id === item.produtoId)!
-      return { produtoId: item.produtoId, quantidade: item.quantidade, precoUnit: produto.precoVenda }
+      return { produtoId: item.produtoId, produtoNome: produto.nome, quantidade: item.quantidade, precoUnit: produto.precoVenda }
     })
 
     // Valida o estoque físico somando doses e unidades que consomem o mesmo produto.
