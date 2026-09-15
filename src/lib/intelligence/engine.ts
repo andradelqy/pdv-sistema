@@ -1145,13 +1145,13 @@ function gerarMotivos(params: {
   return reasons;
 }
 
-export async function getInventoryPolicy(
+export function getInventoryPolicy(
   produto: Produto,
   vendas: Venda[],
   pedidosHistorico: PedidoCompra[],
   lojaId: string,
   catalogo: Produto[] = []
-): Promise<InventoryEngineResult> {
+): InventoryEngineResult {
   // Mantido no contrato para futuras políticas específicas por loja.
   void lojaId;
 

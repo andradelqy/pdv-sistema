@@ -1,77 +1,32 @@
-import { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
-import { fmtR } from '../lib/store';
-import { TrendingUp, BarChart } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock3, PackageSearch, ShoppingCart } from 'lucide-react'
+import type { InventoryEngineResult } from '../lib/intelligence/types'
+import { fmtR } from '../lib/store'
 
-export function PurchasingDashboard({ onModeChange }: { onModeChange: (m: string) => void }) {
-  const [logs, setLogs] = useState<any[]>([]);
-  const [modo, setModo] = useState('recommendation');
+type Props = {
+  decisoes: InventoryEngineResult[]
+  valorPlanejado: number
+  itensPlanejados: number
+  atualizadoEm?: Date
+}
 
-  const atualizarModo = async (novoModo: string) => {
-      setModo(novoModo);
-      onModeChange(novoModo);
-      await supabase.from('config_agente').upsert({ loja_id: 'chegoudrinks', modo: novoModo });
-  }
+/** Painel exclusivamente derivado da análise atual; não usa logs de demonstração. */
+export function PurchasingDashboard({ decisoes, valorPlanejado, itensPlanejados, atualizadoEm }: Props) {
+  const urgentes = decisoes.filter(d => d.recommendation === 'BUY_NOW')
+  const reposicao = decisoes.filter(d => d.recommendation === 'BUY_SOON')
+  const riscoMedio = decisoes.length ? decisoes.reduce((soma, decisao) => soma + decisao.ruptureRisk, 0) / decisoes.length : 0
+  const coberturaCritica = decisoes.filter(d => d.demandForecast > 0 && d.daysOfCover < 3).length
 
-  // ... (dentro do JSX)
-  <select value={modo} onChange={e => atualizarModo(e.target.value)} className="border p-2 rounded">
-      <option value="recommendation">Recomendação</option>
-      <option value="controlled">Controlado</option>
-      <option value="autonomous">Autônomo</option>
-  </select>
-
-  useEffect(() => {
-    supabase.from('log_decisoes_compra')
-      .select('*')
-      .order('data_decisao', { ascending: false })
-      .limit(10)
-      .then(({ data }) => setLogs(data || []));
-  }, []);
-
-  const totalVec = logs.reduce((acc, log) => acc + (log.confianca_score > 80 ? log.detalhes_decisao.vec || 0 : 0), 0);
-
-  return (
-    <div className="p-6 bg-white rounded-xl border space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-xl font-bold">Painel de Auditoria do Agente</h2>
-        <div className="bg-emerald-100 text-emerald-800 px-4 py-2 rounded-lg font-bold">
-          Potencial Retorno (VEC): {fmtR(totalVec)}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="p-4 border rounded-xl bg-slate-50">
-            <h4 className="flex items-center gap-2 font-bold"><TrendingUp size={18}/> Dinheiro na Mesa</h4>
-            <p className="text-sm text-slate-600">Representa o lucro que seria gerado se o estoque estivesse otimizado conforme a sugestão do agente.</p>
-        </div>
-        <div className="p-4 border rounded-xl bg-slate-50">
-            <h4 className="flex items-center gap-2 font-bold"><BarChart size={18}/> Risco Global</h4>
-            <p className="text-sm text-slate-600">Baseado na confiança das previsões e volatilidade dos SKUs.</p>
-        </div>
-      </div>
-
-      <div className="overflow-hidden border rounded-xl">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50">
-            <tr>
-              <th className="p-3 text-left">Data</th>
-              <th className="p-3 text-left">Decisão</th>
-              <th className="p-3">Confiança</th>
-              <th className="p-3">Detalhes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {logs.map(log => (
-              <tr key={log.id} className="border-t">
-                <td className="p-3">{new Date(log.data_decisao).toLocaleDateString()}</td>
-                <td className="p-3 font-semibold">{log.decisao_tomada}</td>
-                <td className="p-3 text-center">{log.confianca_score}%</td>
-                <td className="p-3 text-xs text-slate-500 max-w-[200px] truncate">{JSON.stringify(log.detalhes_decisao)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+  return <section className="card-adega p-5 space-y-4">
+    <div className="flex flex-wrap justify-between gap-3 items-start">
+      <div><h2 className="text-xl font-bold">Resumo da análise de compras</h2><p className="text-sm text-muted-foreground">Indicadores calculados com o estoque, pedidos e vendas carregados agora.</p></div>
+      <span className="text-xs text-muted-foreground flex items-center gap-1"><Clock3 size={14}/>{atualizadoEm ? `Atualizado às ${atualizadoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : 'Aguardando análise'}</span>
     </div>
-  );
+    {!decisoes.length ? <div className="rounded-lg bg-muted p-4 text-sm text-muted-foreground">Não há produtos físicos para analisar nesta loja.</div> : <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+      <div className="rounded-xl border p-4"><div className="text-xs text-muted-foreground">Compra urgente</div><div className={`mt-1 text-2xl font-bold ${urgentes.length ? 'text-destructive' : 'text-success'}`}>{urgentes.length} itens</div><p className="mt-1 text-xs text-muted-foreground">Ruptura ou estoque crítico</p></div>
+      <div className="rounded-xl border p-4"><div className="text-xs text-muted-foreground">Reposição planejada</div><div className="mt-1 text-2xl font-bold text-primary">{itensPlanejados} un.</div><p className="mt-1 text-xs text-muted-foreground">Dentro do orçamento atual</p></div>
+      <div className="rounded-xl border p-4"><div className="text-xs text-muted-foreground">Investimento sugerido</div><div className="mt-1 text-2xl font-bold">{fmtR(valorPlanejado)}</div><p className="mt-1 text-xs text-muted-foreground">Custo dos itens do plano</p></div>
+      <div className="rounded-xl border p-4"><div className="text-xs text-muted-foreground">Risco médio de ruptura</div><div className={`mt-1 text-2xl font-bold ${riscoMedio >= .6 ? 'text-destructive' : riscoMedio >= .35 ? 'text-warning' : 'text-success'}`}>{Math.round(riscoMedio * 100)}%</div><p className="mt-1 text-xs text-muted-foreground">{coberturaCritica} item(ns) com menos de 3 dias</p></div>
+    </div>}
+    {decisoes.length > 0 && <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm"><span className="flex gap-1 items-center"><AlertTriangle size={15} className="text-destructive"/> {urgentes.length} urgentes</span><span className="flex gap-1 items-center"><ShoppingCart size={15} className="text-primary"/> {reposicao.length} para reposição</span><span className="flex gap-1 items-center"><PackageSearch size={15} className="text-muted-foreground"/> {decisoes.length} produtos analisados</span><span className="flex gap-1 items-center"><CheckCircle2 size={15} className="text-success"/> Dados atuais da loja</span></div>}
+  </section>
 }

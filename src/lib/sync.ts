@@ -74,11 +74,28 @@ function check(error: { message: string } | null): void { if (error) throw new E
 
 export type CargaRemota = { produtos: Produto[]; movimentacoes: Movimentacao[]; vendas: Venda[]; clientes: Cliente[]; caixaEntradas: EntradaCaixa[]; caixas: Caixa[]; entregas: PedidoEntrega[]; pedidosCompra: PedidoCompra[]; };
 
+/**
+ * A API do Supabase pagina respostas grandes. Trazer apenas a primeira página
+ * faria o motor enxergar um histórico parcial e subestimar a demanda.
+ */
+async function carregarTabelaDaLoja(table: string, lojaId: string): Promise<Row[]> {
+  const tamanhoPagina = 1_000
+  const rows: Row[] = []
+  let inicio = 0
+
+  while (true) {
+    const resultado = await supabase.from(table).select('*').eq('loja_id', lojaId).range(inicio, inicio + tamanhoPagina - 1)
+    check(resultado.error)
+    const pagina = (resultado.data ?? []) as Row[]
+    rows.push(...pagina)
+    if (pagina.length < tamanhoPagina) return rows
+    inicio += tamanhoPagina
+  }
+}
+
 /** Lê uma loja inteira. O acesso de membros é garantido por RLS; nunca por user_id nesta consulta. */
 export async function carregarTudo(lojaId: string): Promise<CargaRemota> {
-  const results = await Promise.all(['produtos', 'movimentacoes', 'vendas', 'itens_venda', 'clientes', 'caixas', 'caixa_entradas', 'entregas', 'pedidos_compra', 'itens_pedido_compra'].map(table => supabase.from(table).select('*').eq('loja_id', lojaId)));
-  results.forEach(r => check(r.error));
-  const [p, m, v, iv, c, cx, ce, en, pc, ipc] = results.map(r => (r.data ?? []) as Row[]);
+  const [p, m, v, iv, c, cx, ce, en, pc, ipc] = await Promise.all(['produtos', 'movimentacoes', 'vendas', 'itens_venda', 'clientes', 'caixas', 'caixa_entradas', 'entregas', 'pedidos_compra', 'itens_pedido_compra'].map(table => carregarTabelaDaLoja(table, lojaId)));
   const by = <T>(rows: Row[], key: string, fn: (r: Row) => T): Map<string, T[]> => rows.reduce((map, r) => { const id = String(r[key]); map.set(id, [...(map.get(id) ?? []), fn(r)]); return map; }, new Map<string, T[]>());
   const itensVenda = by<ItemVenda>(iv, 'venda_id', r => ({ produtoId: String(r.produto_id), quantidade: Number(r.quantidade), precoUnit: Number(r.preco_unit), produtoNome: r.produto_nome as string | undefined }));
   const itensPedido = by<PedidoCompra['itens'][number]>(ipc, 'pedido_id', r => ({ produtoId: String(r.produto_id), quantidade: Number(r.quantidade_solicitada), precoCusto: Number(r.preco_unit_custo) }));

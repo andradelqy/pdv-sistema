@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware'
 import { hojeBRT, isoParaDataBRT, cortarDataBRT } from './dateBR'
 import { cmvDaVenda } from './lucro'
 import * as sync from './sync'
-import { sugerirEstoqueMinimo } from './intelligence/engine'
+import { getInventoryPolicy } from './intelligence/engine'
 
 export type Produto = {
   id: string
@@ -188,11 +188,16 @@ function recalcularPoliticaEstoque(produtos: Produto[], vendas: Venda[], pedidos
     if (produto.produtoEstoqueOrigemId) {
       return produto.estoqueMin === 0 && produto.pontoPedido === 0 ? produto : { ...produto, estoqueMin: 0, pontoPedido: 0 }
     }
-    const estoqueMin = sugerirEstoqueMinimo(produto, vendasConvertidas, pedidosCompra)
-    const pontoPedido = Math.max(estoqueMin + 2, Math.ceil(estoqueMin * 1.5))
-    return produto.estoqueMin === estoqueMin && produto.pontoPedido === pontoPedido
+    // O cadastro e a tela de Compras usam o mesmo motor. Isso evita que o
+    // "mínimo automático" diga uma coisa e o plano de compra diga outra.
+    const politica = getInventoryPolicy(produto, vendasConvertidas, pedidosCompra, 'local', produtos)
+    // Estoque mínimo é a proteção de segurança; ponto de pedido inclui a
+    // demanda esperada durante o pior prazo observado do fornecedor.
+    const estoqueMin = Math.max(1, politica.safetyStock)
+    const pontoPedido = Math.max(estoqueMin, politica.reorderPoint)
+    return produto.estoqueMin === estoqueMin && produto.pontoPedido === pontoPedido && produto.confidenceScore === politica.confidenceScore
       ? produto
-      : { ...produto, estoqueMin, pontoPedido }
+      : { ...produto, estoqueMin, pontoPedido, confidenceScore: politica.confidenceScore }
   })
 }
 

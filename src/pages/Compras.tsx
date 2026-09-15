@@ -1,181 +1,98 @@
 import { useMemo, useState } from 'react'
+import { AlertTriangle, CheckCircle2, CircleHelp, Eye, PackagePlus, RefreshCw, ShoppingCart, Wrench } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { toast } from '../lib/toast'
-import { motion, AnimatePresence } from 'motion/react'
-import { Wand2, HelpCircle } from 'lucide-react'
 import { GerenciarCompras } from '../components/GerenciarCompras'
 import { PurchasingDashboard } from '../components/PurchasingDashboard'
 import { TutorialCompras } from '../components/TutorialCompras'
-import { getInventoryPolicy } from '../lib/intelligence/engine'
-import type { InventoryEngineResult } from '../lib/intelligence/types'
-import type { Produto, Venda } from '../lib/store'
+import { montarPlanoCompra, type FaixaCompra, type ItemPlanoCompra } from '../lib/intelligence/purchasePlanner'
 
-const containerVariants = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.05 } } }
-const itemVariants = { hidden: { y: 10, opacity: 0 }, show: { y: 0, opacity: 1 } }
+const faixas: Array<{ id: FaixaCompra | 'TODOS'; nome: string; icone: typeof ShoppingCart }> = [
+  { id: 'COMPRAR_AGORA', nome: 'Comprar agora', icone: AlertTriangle },
+  { id: 'PLANEJAR', nome: 'Planejar', icone: PackagePlus },
+  { id: 'MONITORAR', nome: 'Monitorar', icone: Eye },
+  { id: 'CORRIGIR_DADOS', nome: 'Corrigir dados', icone: Wrench },
+  { id: 'TODOS', nome: 'Todos', icone: CheckCircle2 },
+]
 
-type ItemPlanejado = { produtoId: string; quantidade: number; precoCusto: number; fornecedorId: string }
-
-function vendasParaReposicao(vendas: Venda[], produtos: Produto[]): Venda[] {
-  return vendas.map(venda => {
-    const itens = new Map<string, Venda['itens'][number]>()
-    venda.itens.forEach(item => {
-      const produto = produtos.find(p => p.id === item.produtoId)
-      const origemId = produto?.produtoEstoqueOrigemId || item.produtoId
-      const divisor = Math.max(1, produto?.unidadesPorEstoqueOrigem || 1)
-      const atual = itens.get(origemId)
-      itens.set(origemId, { produtoId: origemId, quantidade: (atual?.quantidade || 0) + item.quantidade / divisor, precoUnit: produto?.produtoEstoqueOrigemId ? item.precoUnit * divisor : item.precoUnit })
-    })
-    return { ...venda, itens: [...itens.values()] }
-  })
+function corFaixa(faixa: FaixaCompra) {
+  return { COMPRAR_AGORA: 'bg-red-100 text-red-700', PLANEJAR: 'bg-blue-100 text-blue-700', MONITORAR: 'bg-slate-100 text-slate-700', CORRIGIR_DADOS: 'bg-amber-100 text-amber-800' }[faixa]
 }
 
-function otimizarPlano(decisoes: InventoryEngineResult[], produtos: Produto[], orcamento: number, autonomo: boolean): ItemPlanejado[] {
+function nomeFaixa(faixa: FaixaCompra) {
+  return { COMPRAR_AGORA: 'Comprar agora', PLANEJAR: 'Planejar reposição', MONITORAR: 'Monitorar', CORRIGIR_DADOS: 'Corrigir dados' }[faixa]
+}
+
+function itensNoOrcamento(itens: ItemPlanoCompra[], orcamento: number, autonomo: boolean) {
   let saldo = Math.max(0, orcamento)
-  return decisoes
-    .filter(d => d.recommendedPurchaseQty > 0 && (d.recommendation === 'BUY_NOW' || d.recommendation === 'BUY_SOON'))
-    .filter(d => !autonomo || (d.recommendation === 'BUY_NOW' && d.confidenceScore >= 70))
-    .map(decisao => ({ decisao, produto: produtos.find(produto => produto.id === decisao.productId)! }))
-    .filter(({ produto }) => Boolean(produto) && produto.precoCompra > 0)
-    .sort((a, b) => {
-      const prioridade = ({ decisao, produto }: typeof a) =>
-        (decisao.recommendation === 'BUY_NOW' ? 100 : 40) + decisao.ruptureRisk * 100 + decisao.automaticImportanceScore + decisao.confidenceScore * 0.25 + ((produto.precoVenda - produto.precoCompra) / produto.precoVenda) * 25
-      return prioridade(b) - prioridade(a)
-    })
-    .flatMap(({ decisao, produto }) => {
-      const quantidade = Math.min(decisao.recommendedPurchaseQty, Math.floor(saldo / produto.precoCompra))
+  return itens.filter(item => item.faixa === 'COMPRAR_AGORA' || item.faixa === 'PLANEJAR')
+    .filter(item => !autonomo || (item.faixa === 'COMPRAR_AGORA' && item.politica.confidenceScore >= 70))
+    .flatMap(item => {
+      const quantidade = Math.min(item.quantidadeSugerida, Math.floor(saldo / item.produto.precoCompra))
       if (quantidade <= 0) return []
-      saldo -= quantidade * produto.precoCompra
-      return [{ produtoId: produto.id, quantidade, precoCusto: produto.precoCompra, fornecedorId: produto.fornecedor?.trim() || 'sem_fornecedor' }]
+      saldo -= quantidade * item.produto.precoCompra
+      return [{ ...item, quantidade, custo: quantidade * item.produto.precoCompra }]
     })
 }
 
 export function Compras() {
-  const { produtos, vendas, pedidosCompra, addPedidoCompra } = useStore()
-  const [orcamento, setOrcamento] = useState<number>(5000)
-  const [decisoes, setDecisoes] = useState<InventoryEngineResult[]>([])
+  const { produtos, vendas, pedidosCompra, lojaId, addPedidoCompra } = useStore()
+  const [orcamento, setOrcamento] = useState(5000)
   const [modo, setModo] = useState<'recommendation' | 'controlled' | 'autonomous'>('recommendation')
+  const [aba, setAba] = useState<FaixaCompra | 'TODOS'>('COMPRAR_AGORA')
   const [showHelp, setShowHelp] = useState(false)
-  const produtosParaCompra = useMemo(() => produtos.filter(produto => !produto.produtoEstoqueOrigemId), [produtos])
-  const vendasParaCompra = useMemo(() => vendasParaReposicao(vendas, produtos), [vendas, produtos])
-  const plano = useMemo(() => otimizarPlano(decisoes, produtosParaCompra, orcamento, modo === 'autonomous'), [decisoes, produtosParaCompra, orcamento, modo])
+  const [atualizadoEm, setAtualizadoEm] = useState(() => new Date())
+  const planoCompleto = useMemo(() => montarPlanoCompra(produtos, vendas, pedidosCompra, lojaId), [lojaId, pedidosCompra, produtos, vendas])
+  const planoOrcamento = useMemo(() => itensNoOrcamento(planoCompleto, orcamento, modo === 'autonomous'), [modo, orcamento, planoCompleto])
+  const itensVisiveis = aba === 'TODOS' ? planoCompleto : planoCompleto.filter(item => item.faixa === aba)
+  const vendasSemItens = vendas.filter(venda => venda.itens.length === 0).length
+  const valorPlanejado = planoOrcamento.reduce((soma, item) => soma + item.custo, 0)
+  const unidadesPlanejadas = planoOrcamento.reduce((soma, item) => soma + item.quantidade, 0)
 
-  const rodarAgente = async () => {
-    const todosPedidos = useStore.getState().pedidosCompra
-    const lojaId = useStore.getState().lojaId
-    
-    const sugestoes: InventoryEngineResult[] = await Promise.all(produtosParaCompra.map(async p => {
-        return await getInventoryPolicy(p, vendasParaCompra, todosPedidos, lojaId, produtosParaCompra)
+  const atualizarAnalise = () => {
+    setAtualizadoEm(new Date())
+    const agora = planoCompleto.filter(item => item.faixa === 'COMPRAR_AGORA').length
+    toast(`Análise atualizada: ${planoCompleto.length} produto(s) avaliados; ${agora} exigem compra agora.`, agora ? 'warning' : 'success')
+  }
+
+  const criarPedidos = () => {
+    if (modo === 'recommendation') {
+      toast('Você está em modo Recomendação. Revise o plano e escolha o modo Controlado para criar pedidos.', 'warning')
+      return
+    }
+    if (!planoOrcamento.length) {
+      toast('Não há itens elegíveis dentro do orçamento. Verifique custo, confiança e dados do produto.', 'warning')
+      return
+    }
+    const porFornecedor = planoOrcamento.reduce<Record<string, typeof planoOrcamento>>((grupos, item) => {
+      const fornecedor = item.produto.fornecedor?.trim() || 'Fornecedor a definir'
+      ;(grupos[fornecedor] ??= []).push(item)
+      return grupos
+    }, {})
+    Object.entries(porFornecedor).forEach(([fornecedorId, itens]) => addPedidoCompra({
+      id: `ped_${Math.random().toString(36).slice(2, 11)}`,
+      fornecedorId,
+      status: modo === 'autonomous' ? 'pending' : 'draft',
+      itens: itens.map(item => ({ produtoId: item.produto.id, quantidade: item.quantidade, precoCusto: item.produto.precoCompra })),
+      dataPedido: new Date().toISOString(), lojaId,
     }))
-    setDecisoes(sugestoes)
+    toast(`${Object.keys(porFornecedor).length} pedido(s) criado(s) no valor de ${valorPlanejado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`, 'success')
   }
 
-  const realizarCompraInteligente = () => {
-      if (modo === 'recommendation') {
-        toast('Modo recomendação: revise o plano e escolha Controlado ou Autônomo para criar pedidos.', 'warning')
-        return
-      }
+  return <div className="space-y-6 p-6 pb-28">
+    <TutorialCompras isOpen={showHelp} onClose={() => setShowHelp(false)} />
+    <div className="flex flex-wrap gap-3 justify-between items-start"><div><h1 className="text-2xl font-bold">Compras inteligentes</h1><p className="text-sm text-muted-foreground">Compre para manter disponibilidade, sem prender dinheiro em produtos parados.</p></div><div className="flex gap-2"><button onClick={() => setShowHelp(true)} className="p-2 border rounded-lg" aria-label="Como funciona"><CircleHelp size={19}/></button><button onClick={atualizarAnalise} className="inline-flex gap-2 items-center bg-primary text-primary-foreground px-4 py-2 rounded-lg font-semibold"><RefreshCw size={17}/>Atualizar análise</button></div></div>
 
-      const carrinho = plano
+    <PurchasingDashboard decisoes={planoCompleto.map(item => item.politica)} valorPlanejado={valorPlanejado} itensPlanejados={unidadesPlanejadas} atualizadoEm={atualizadoEm} />
+    {vendasSemItens > 0 && <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><strong>{vendasSemItens} venda(s) sem itens vinculados.</strong> Elas entram no financeiro, mas não permitem descobrir qual produto foi vendido. Corrija-as antes de confiar na previsão desses produtos.</div>}
 
-      if (carrinho.length === 0) {
-          toast('Nenhuma compra recomendada para este orçamento', 'warning')
-          return
-      }
-      
-      const porFornecedor = carrinho.reduce<Record<string, ItemPlanejado[]>>((grupos, item) => {
-        ;(grupos[item.fornecedorId] ??= []).push(item)
-        return grupos
-      }, {})
-      for (const [fornecedorId, itens] of Object.entries(porFornecedor)) addPedidoCompra({
-          id: 'ped_' + Math.random().toString(36).substr(2, 9),
-          fornecedorId,
-          status: modo === 'autonomous' ? 'pending' : 'draft',
-          itens: itens.map(({ produtoId, quantidade, precoCusto }) => ({ produtoId, quantidade, precoCusto })),
-          dataPedido: new Date().toISOString(),
-          lojaId: useStore.getState().lojaId
-      })
-      toast(`${Object.keys(porFornecedor).length} pedido(s) criado(s) dentro do orçamento de ${orcamento.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`, 'success')
-      setDecisoes([])
-  }
+    <section className="card-adega p-5"><div className="grid md:grid-cols-3 gap-4 items-end"><div><label className="text-xs font-bold uppercase text-muted-foreground">Orçamento disponível</label><input aria-label="Orçamento disponível" min="0" type="number" value={orcamento} onChange={e => setOrcamento(Math.max(0, Number(e.target.value) || 0))} className="w-full mt-1 p-2 border rounded-lg text-lg font-semibold"/></div><div><label className="text-xs font-bold uppercase text-muted-foreground">Modo de execução</label><select value={modo} onChange={e => setModo(e.target.value as typeof modo)} className="w-full mt-1 p-2 border rounded-lg bg-background"><option value="recommendation">Recomendação — não cria pedido</option><option value="controlled">Controlado — cria para aprovação</option><option value="autonomous">Autônomo — apenas urgentes confiáveis</option></select></div><div className="rounded-lg bg-muted p-3 text-sm"><strong>{valorPlanejado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</strong><br/><span className="text-muted-foreground">{unidadesPlanejadas} un. priorizadas dentro do orçamento</span></div></div></section>
 
-  return (
-    <motion.div variants={containerVariants} initial="hidden" animate="show" className="space-y-6 p-6 pb-24">
-      <TutorialCompras isOpen={showHelp} onClose={() => setShowHelp(false)} />
+    <div className="flex flex-wrap gap-2">{faixas.map(({ id, nome, icone: Icon }) => { const quantidade = id === 'TODOS' ? planoCompleto.length : planoCompleto.filter(item => item.faixa === id).length; return <button key={id} onClick={() => setAba(id)} className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-semibold ${aba === id ? 'bg-foreground text-background' : 'bg-card hover:bg-muted'}`}><Icon size={16}/>{nome}<span className="rounded-full bg-background/20 px-1.5">{quantidade}</span></button> })}</div>
 
-      <div className="flex justify-between items-center">
-         <PurchasingDashboard onModeChange={(m) => setModo(m as any)} />
-         <button onClick={() => setShowHelp(true)} className="p-2 bg-white rounded-lg shadow border hover:bg-slate-50"><HelpCircle size={20}/></button>
-      </div>
+    <section className="space-y-3">{itensVisiveis.length ? itensVisiveis.map(item => <article key={item.produto.id} className="card-adega p-5"><div className="flex flex-wrap justify-between gap-3"><div><div className="flex gap-2 items-center flex-wrap"><h2 className="font-bold text-lg">{item.produto.nome}</h2><span className={`px-2 py-1 rounded-full text-xs font-bold ${corFaixa(item.faixa)}`}>{nomeFaixa(item.faixa)}</span></div><p className="mt-1 text-sm text-muted-foreground">{item.explicacao}</p></div><div className="text-right"><p className="text-xs text-muted-foreground">Recomendação</p><p className="text-2xl font-bold">{item.quantidadeSugerida} un.</p><p className="text-sm text-muted-foreground">{item.custoEstimado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p></div></div><div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4 text-sm"><div><span className="text-muted-foreground">Em estoque</span><strong className="block">{item.produto.estoque} un.</strong></div><div><span className="text-muted-foreground">Em trânsito</span><strong className="block">{item.emTransito} un.</strong></div><div><span className="text-muted-foreground">Demanda</span><strong className="block">{item.politica.demandForecast.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} un./dia</strong></div><div><span className="text-muted-foreground">Cobertura</span><strong className="block">{item.politica.daysOfCover >= 999 ? 'Sem medida' : `${item.politica.daysOfCover} dias`}</strong></div><div><span className="text-muted-foreground">Confiança</span><strong className="block">{item.politica.confidenceScore}%</strong></div></div>{item.bloqueio && <p className="mt-4 rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-950">Ação necessária: {item.bloqueio}</p>}<details className="mt-4 text-sm"><summary className="cursor-pointer text-primary font-semibold">Entender este cálculo</summary><p className="mt-2 text-muted-foreground">Ponto de pedido: {item.politica.reorderPoint} un. · Estoque de segurança: {item.politica.safetyStock} un. · Estoque alvo: {item.politica.maximumStock} un. · Risco de ruptura: {Math.round(item.politica.ruptureRisk * 100)}%.</p></details></article>) : <div className="card-adega p-8 text-center text-muted-foreground">Nenhum produto nesta categoria.</div>}</section>
 
-      <GerenciarCompras />
-      
-      <div className="card-adega p-6 space-y-4">
-        <h2 className="text-xl font-bold flex items-center gap-2">
-            <Wand2 className="text-amber-500" /> Agente de Compras Inteligente
-        </h2>
-        <div className="flex gap-4 items-end">
-            <div className="flex-1">
-                <label className="block text-xs font-bold text-slate-500 uppercase">Orçamento Disponível</label>
-                <input type="number" className="w-full p-2 border rounded-lg" value={orcamento} onChange={e => setOrcamento(Number(e.target.value))} />
-            </div>
-            
-            <div className="flex-1">
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                    Modo de Automação
-                </label>
-                <select value={modo} onChange={(e) => setModo(e.target.value as any)} className="w-full p-2 border rounded-lg bg-white">
-                    <option value="recommendation">Recomendação (Sugerir)</option>
-                    <option value="controlled">Controlado (Aprovar)</option>
-                    <option value="autonomous">Autônomo (Auto-compra)</option>
-                </select>
-                <p className="text-[10px] text-slate-500 mt-1 italic">
-                    {modo === 'recommendation' && "O agente apenas recomenda produtos."}
-                    {modo === 'controlled' && "O agente cria o pedido e você confirma."}
-                    {modo === 'autonomous' && "O agente compra itens críticos automaticamente."}
-                </p>
-            </div>
-            <button onClick={rodarAgente} className="bg-slate-900 text-white px-6 py-2 rounded-lg font-bold">Analisar Mercado</button>
-        </div>
-      </div>
-
-      <AnimatePresence>
-        {decisoes.length > 0 && (
-          <motion.div variants={containerVariants} className="grid grid-cols-1 gap-4">
-            {decisoes.map(d => {
-                const p = produtos.find(x => x.id === d.productId)
-                const itemPlanejado = plano.find(item => item.produtoId === d.productId)
-                const emTransito = pedidosCompra
-                  .filter(pedido => pedido.status === 'pending' || pedido.status === 'in_transit')
-                  .reduce((soma, pedido) => soma + (pedido.itens.find(item => item.produtoId === d.productId)?.quantidade ?? 0), 0)
-                if (!p) return null
-                return (
-                    <motion.div variants={itemVariants} key={d.productId} className="p-4 border rounded-xl bg-white shadow-sm flex flex-col gap-2">
-                        <div className="flex justify-between">
-                            <span className="font-bold text-lg">{p.nome}</span>
-                            <span className={`px-2 py-1 rounded text-xs font-bold`}>{d.recommendation}</span>
-                        </div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-slate-600">
-                          <span>Estoque atual: <strong>{p.estoque} un.</strong></span>
-                          <span>Em reposição: <strong>{emTransito} un.</strong></span>
-                          <span>Ponto de pedido: <strong>{d.reorderPoint} un.</strong></span>
-                          <span>Estoque alvo: <strong>{d.maximumStock} un.</strong></span>
-                        </div>
-                        <p className="text-sm font-semibold">Compra necessária: {d.recommendedPurchaseQty} un. {d.recommendedPurchaseQty <= 0 ? 'Sem reposição necessária segundo a demanda e os pedidos já aprovados.' : itemPlanejado ? `Plano dentro do orçamento: ${itemPlanejado.quantidade} un.` : 'Fora do plano por orçamento, confiança ou custo.'}</p>
-                        <p className="text-xs text-muted-foreground">{d.reasons.join(' | ')}</p>
-                        <div className="text-[10px] text-slate-400 font-mono mt-2">Score Importância: {d.automaticImportanceScore} | Confiança: {d.confidenceScore}%</div>
-                    </motion.div>
-                )
-            })}
-          </motion.div>
-        )}
-      </AnimatePresence>
-      
-      {/* Sticky Action Footer */}
-      {decisoes.length > 0 && (
-          <div className="fixed bottom-0 left-0 w-full p-4 bg-white border-t shadow-lg z-40">
-             <button onClick={realizarCompraInteligente} className="w-full bg-emerald-600 text-white p-4 rounded-xl font-bold text-lg">{modo === 'recommendation' ? 'Plano para revisão' : modo === 'controlled' ? 'Criar pedidos para aprovação' : 'Criar pedidos autônomos'}</button>
-          </div>
-      )}
-    </motion.div>
-  )
+    <GerenciarCompras />
+    <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background/95 backdrop-blur p-4"><div className="max-w-6xl mx-auto flex flex-wrap gap-3 justify-between items-center"><span className="text-sm"><strong>{planoOrcamento.length} itens</strong> prontos para o plano · {valorPlanejado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span><button onClick={criarPedidos} className="bg-emerald-600 text-white px-5 py-3 rounded-lg font-bold">{modo === 'recommendation' ? 'Revisar modo de execução' : modo === 'controlled' ? 'Criar pedidos para aprovação' : 'Criar pedidos urgentes'}</button></div></div>
+  </div>
 }
