@@ -19,10 +19,10 @@ export function GerenciarCompras() {
   }
 
   return (
-    <div className="p-6 bg-white rounded-xl border">
+    <div className="card-adega p-6">
       <h2 className="text-xl font-bold mb-4">Pedidos de Compra</h2>
       {pedidosAtivos.length === 0 ? (
-        <p className="text-sm text-slate-500">Nenhum pedido pendente.</p>
+        <p className="text-sm text-muted-foreground">Nenhum pedido pendente.</p>
       ) : (
         <div className="space-y-4">
           {pedidosAtivos.map(p => {
@@ -31,7 +31,7 @@ export function GerenciarCompras() {
               <div key={p.id} className="p-4 border rounded-lg flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
                   <p className="font-bold">Pedido #{p.id.slice(-4)} · {p.fornecedorId}</p>
-                  <p className="text-sm text-slate-600">{statusLabel[p.status]} · {p.itens.length} item(ns) · {fmtR(total)}</p>
+                  <p className="text-sm text-muted-foreground">{statusLabel[p.status]} · {p.itens.length} item(ns) · {fmtR(total)}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {p.status === 'draft' && (

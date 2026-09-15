@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import type { Session } from '@supabase/supabase-js';
 import {
   BarChart3, Bell, Boxes, ChartNoAxesCombined, Clock3, Database, Gauge, MapPinned,
-  Menu, Moon, Package, ShoppingCart, Sun, Truck, Users, Wallet, Wine, LogOut, Loader2
+  Menu, Moon, Package, ShoppingCart, Sun, Truck, Users, Wallet, LogOut, Loader2
 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { useStore } from './lib/store';
@@ -52,6 +52,18 @@ function paginaInicialDoPapel(role?: keyof typeof paginasPorPapel): Page {
   return role === 'entregador' ? 'entregador' : role === 'atendente' ? 'pdv' : 'dashboard';
 }
 
+/** Marca vetorial compacta baseada no símbolo orbital da identidade Órbita. */
+function OrbitaMark() {
+  return <svg viewBox="0 0 48 48" className="h-9 w-9 shrink-0" role="img" aria-label="Órbita">
+    <circle cx="24" cy="24" r="15" fill="#0b2545" />
+    <circle cx="24" cy="24" r="8.5" fill="currentColor" className="text-white dark:text-black" />
+    <g className="origin-center animate-[spin_9s_linear_infinite] motion-reduce:animate-none">
+      <ellipse cx="24" cy="24" rx="22" ry="7.5" fill="none" stroke="#08b6d5" strokeWidth="2.3" />
+      <circle cx="43" cy="24" r="3.4" fill="#08b6d5" />
+    </g>
+  </svg>
+}
+
 // ============ SIDEBAR ============
 
 function Sidebar({
@@ -98,9 +110,9 @@ function Sidebar({
       >
         {/* Brand */}
         <div className={`flex items-center gap-2 h-16 px-4 border-b flex-shrink-0 ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
-          <Wine className="text-primary" size={24} strokeWidth={1.5} />
+          <OrbitaMark />
           <span className={`font-bold text-lg tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>Órbita</span>
-          <span className={`text-[10px] font-mono ml-auto ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>v1.0</span>
+          <span className={`text-[10px] font-mono ml-auto ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>versão 2.0</span>
         </div>
 
         {/* Navegação com scroll suave e invisível */}

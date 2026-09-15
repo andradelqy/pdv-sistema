@@ -34,24 +34,25 @@
   }
 
   .dark {
-    --background: 222 28% 8%;
-    --foreground: 220 14% 91%;
+    /* Paleta do Dashboard: preto profundo e superfícies de vidro sutis. */
+    --background: 225 25% 4%;
+    --foreground: 220 20% 96%;
     --card: 222 25% 11%;
-    --card-foreground: 220 14% 91%;
+    --card-foreground: 220 20% 96%;
     --popover: 222 25% 11%;
-    --popover-foreground: 220 14% 91%;
+    --popover-foreground: 220 20% 96%;
     --primary: 225 89% 61%;
     --primary-foreground: 0 0% 100%;
     --secondary: 222 20% 16%;
     --secondary-foreground: 220 14% 91%;
-    --muted: 222 20% 16%;
-    --muted-foreground: 220 9% 50%;
+    --muted: 220 16% 14%;
+    --muted-foreground: 220 12% 65%;
     --accent: 225 89% 61%;
     --accent-foreground: 0 0% 100%;
     --destructive: 0 72% 55%;
     --destructive-foreground: 0 0% 100%;
-    --border: 222 20% 20%;
-    --input: 222 20% 20%;
+    --border: 220 18% 19%;
+    --input: 220 18% 19%;
     --ring: 225 89% 61%;
     --success: 160 84% 39%;
     --warning: 38 92% 50%;
@@ -172,6 +173,44 @@
   transition: box-shadow 0.2s;
 }
 .card-adega:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+
+/* ── TEMA ESCURO UNIFICADO ──
+   Algumas telas antigas usam utilitários claros diretamente. Estas regras os
+   alinham ao acabamento de vidro usado no Dashboard sem alterar o tema claro. */
+.dark .card-adega {
+  background: hsl(0 0% 100% / 0.05);
+  border-color: hsl(0 0% 100% / 0.10);
+  box-shadow: none;
+}
+.dark .card-adega:hover { background: hsl(0 0% 100% / 0.08); box-shadow: 0 12px 30px hsl(0 0% 0% / 0.18); }
+.dark .bg-white,
+.dark .bg-slate-50,
+.dark .bg-white\/80,
+.dark .bg-white\/60 {
+  background-color: hsl(0 0% 100% / 0.05) !important;
+}
+.dark .bg-slate-100 { background-color: hsl(0 0% 100% / 0.09) !important; }
+.dark .text-slate-900,
+.dark .text-slate-800 { color: hsl(var(--foreground)) !important; }
+.dark .text-slate-700 { color: hsl(220 20% 88%) !important; }
+.dark .text-slate-600,
+.dark .text-slate-500,
+.dark .text-slate-400 { color: hsl(var(--muted-foreground)) !important; }
+.dark input:not([type="checkbox"]):not([type="radio"]),
+.dark select,
+.dark textarea {
+  background-color: hsl(0 0% 100% / 0.06) !important;
+  color: hsl(var(--foreground)) !important;
+  border-color: hsl(0 0% 100% / 0.13) !important;
+}
+.dark input::placeholder,
+.dark textarea::placeholder { color: hsl(var(--muted-foreground)) !important; }
+.dark select option { background: hsl(222 25% 11%); color: hsl(var(--foreground)); }
+.dark .border-gray-200,
+.dark .border-slate-200,
+.dark .border-slate-300 { border-color: hsl(0 0% 100% / 0.12) !important; }
+.dark .bg-amber-50 { background-color: hsl(38 92% 50% / 0.10) !important; }
+.dark .text-amber-950 { color: hsl(38 90% 82%) !important; }
 
 /* ── KPI CARDS ── */
 .kpi-value { font-size: 28px; font-weight: 700; line-height: 1.1; }
