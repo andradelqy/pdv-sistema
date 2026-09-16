@@ -3,11 +3,13 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import type { Session } from '@supabase/supabase-js';
 import {
   BarChart3, Bell, Boxes, ChartNoAxesCombined, Clock3, Database, Gauge, MapPinned,
-  Menu, Moon, Package, ShoppingCart, Sun, Truck, Users, Wallet, LogOut, Loader2, FileChartColumn
+  Menu, Moon, Package, ShoppingCart, Sun, Truck, Users, Wallet, LogOut, Loader2,
+  FileChartColumn, LockKeyhole
 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { useStore } from './lib/store';
 import { carregarTudo, getSyncQueueStatus, processarFilaSync, subscribeSyncQueueStatus, type SyncQueueStatus } from './lib/sync';
+import { assinaturaEstaLiberada, dataDaAssinatura, type AssinaturaLoja } from './lib/assinatura';
 import { ToastProvider } from './lib/toast';
 import { Login } from './Login';
 const Dashboard = lazy(() => import('./pages/Dashboard').then(module => ({ default: module.Dashboard })));
@@ -274,9 +276,65 @@ function Topbar({
 
 // ============ APP CONTENT ============
 
+type EstadoAcesso = {
+  liberado: boolean;
+  assinatura?: AssinaturaLoja;
+  erro?: string;
+};
+
+async function consultarAcessoDaLoja(lojaId: string): Promise<EstadoAcesso> {
+  const { data, error } = await supabase
+    .from('assinaturas_lojas')
+    .select('loja_id,nome_loja,plano,status,periodo_teste_ate,acesso_ate,carencia_ate,mensagem_bloqueio')
+    .eq('loja_id', lojaId)
+    .maybeSingle();
+
+  if (error) throw new Error(`Não foi possível validar a assinatura: ${error.message}`);
+  if (!data) return { liberado: false, erro: 'Esta loja ainda não possui uma assinatura configurada.' };
+  const assinatura = data as AssinaturaLoja;
+  return { liberado: assinaturaEstaLiberada(assinatura), assinatura };
+}
+
+function AcessoBloqueado({ acesso, tema }: { acesso: EstadoAcesso; tema: 'light' | 'dark' }) {
+  const validade = dataDaAssinatura(acesso.assinatura);
+  const mensagem = acesso.erro
+    || acesso.assinatura?.mensagem_bloqueio
+    || (validade ? `O acesso contratado terminou em ${validade}.` : 'O acesso desta loja está temporariamente suspenso.');
+
+  return (
+    <div className={`min-h-screen grid place-items-center p-6 ${tema === 'dark' ? 'bg-black text-white' : 'bg-slate-50 text-slate-900'}`}>
+      <div className={`w-full max-w-md rounded-2xl border p-7 shadow-sm ${tema === 'dark' ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-white'}`}>
+        <div className="mb-5 grid h-12 w-12 place-items-center rounded-xl bg-amber-500/15 text-amber-500">
+          <LockKeyhole size={24} />
+        </div>
+        <p className="text-xs font-semibold uppercase tracking-widest text-amber-500">Assinatura</p>
+        <h1 className="mt-2 text-2xl font-bold">Acesso à loja indisponível</h1>
+        <p className={`mt-3 text-sm leading-6 ${tema === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>{mensagem}</p>
+        {acesso.assinatura && (
+          <div className={`mt-5 rounded-xl border p-4 text-sm ${tema === 'dark' ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-slate-50'}`}>
+            <div className="flex justify-between gap-4"><span>Loja</span><strong>{acesso.assinatura.nome_loja}</strong></div>
+            <div className="mt-2 flex justify-between gap-4"><span>Plano</span><strong className="capitalize">{acesso.assinatura.plano}</strong></div>
+            <div className="mt-2 flex justify-between gap-4"><span>Status</span><strong className="capitalize">{acesso.assinatura.status.replace('_', ' ')}</strong></div>
+          </div>
+        )}
+        <p className={`mt-5 text-xs ${tema === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
+          Entre em contato com o responsável pela sua assinatura para renovar ou regularizar o acesso.
+        </p>
+        <button
+          onClick={() => void supabase.auth.signOut()}
+          className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold transition hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-900"
+        >
+          <LogOut size={17} /> Sair da conta
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AppContent() {
   const [session, setSession] = useState<Session | null>(null);
   const [verificandoSessao, setVerificandoSessao] = useState(true);
+  const [acesso, setAcesso] = useState<EstadoAcesso | null>(null);
   const [page, setPage] = useState<Page>('dashboard');
   const [menuOpen, setMenuOpen] = useState(false);
   const { tema, toggleTema, produtos, entregas, caixaAberto, hydrateFromRemote, currentRole } = useStore();
@@ -294,43 +352,91 @@ function AppContent() {
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', tema === 'dark');
-
-    supabase.auth.getSession().then(async ({ data }) => {
-      setSession(data.session);
-      setVerificandoSessao(false);
-      if (data.session) {
-        try {
-          const { data: perfil, error: perfilError } = await supabase.from('perfis').select('*').eq('id', data.session.user.id).single();
-          if (perfilError || !perfil?.loja_id) throw new Error(perfilError?.message || 'Perfil sem loja_id configurado.');
-          useStore.getState().setRole(perfil.role, perfil.loja_id, { id: data.session.user.id, nome: perfil.nome || perfil.email || data.session.user.email || 'Usuário' });
-          const remoto = await carregarTudo(perfil.loja_id);
-          hydrateFromRemote(remoto);
-        } catch (error) { console.error('Falha ao carregar remoto:', error); }
-      }
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, value) => {
-      setSession(value);
-      if (value) {
-        try {
-          const { data: perfil, error: perfilError } = await supabase.from('perfis').select('*').eq('id', value.user.id).single();
-          if (perfilError || !perfil?.loja_id) throw new Error(perfilError?.message || 'Perfil sem loja_id configurado.');
-          useStore.getState().setRole(perfil.role, perfil.loja_id, { id: value.user.id, nome: perfil.nome || perfil.email || value.user.email || 'Usuário' });
-          const remoto = await carregarTudo(perfil.loja_id);
-          hydrateFromRemote(remoto);
-        } catch (error) { console.error('Falha ao carregar remoto:', error); }
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, [tema, hydrateFromRemote]);
+  }, [tema]);
 
   useEffect(() => {
+    let ativo = true;
+
+    const carregarSessao = async (value: Session | null) => {
+      if (!ativo) return;
+      setSession(value);
+      if (!value) {
+        setAcesso(null);
+        setVerificandoSessao(false);
+        return;
+      }
+
+      setVerificandoSessao(true);
+      try {
+        const { data: perfil, error: perfilError } = await supabase
+          .from('perfis')
+          .select('id,email,nome,role,loja_id')
+          .eq('id', value.user.id)
+          .single();
+        if (perfilError || !perfil?.loja_id) throw new Error(perfilError?.message || 'Perfil sem loja_id configurado.');
+
+        const estadoAcesso = await consultarAcessoDaLoja(perfil.loja_id);
+        if (!ativo) return;
+        setAcesso(estadoAcesso);
+        if (!estadoAcesso.liberado) return;
+
+        useStore.getState().setRole(perfil.role, perfil.loja_id, {
+          id: value.user.id,
+          nome: perfil.nome || perfil.email || value.user.email || 'Usuário',
+        });
+        const remoto = await carregarTudo(perfil.loja_id);
+        if (ativo) hydrateFromRemote(remoto);
+      } catch (error) {
+        const mensagem = error instanceof Error ? error.message : 'Não foi possível validar o acesso desta loja.';
+        console.error('Falha ao carregar remoto:', error);
+        if (ativo) setAcesso({ liberado: false, erro: mensagem });
+      } finally {
+        if (ativo) setVerificandoSessao(false);
+      }
+    };
+
+    void supabase.auth.getSession().then(({ data }) => carregarSessao(data.session));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, value) => {
+      if (event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') return;
+      window.setTimeout(() => void carregarSessao(value), 0);
+    });
+
+    return () => {
+      ativo = false;
+      subscription.unsubscribe();
+    };
+  }, [hydrateFromRemote]);
+
+  // Uma suspensão manual entra em vigor sem exigir novo login. O banco já
+  // bloqueia as operações imediatamente; esta verificação atualiza também a UI.
+  useEffect(() => {
+    if (!session || !acesso?.liberado) return;
+    const revalidar = async () => {
+      const lojaId = useStore.getState().lojaId;
+      if (!lojaId) return;
+      try {
+        const estado = await consultarAcessoDaLoja(lojaId);
+        if (!estado.liberado) setAcesso(estado);
+      } catch (error) {
+        console.error('Falha ao revalidar assinatura:', error);
+      }
+    };
+    const intervalo = window.setInterval(() => void revalidar(), 60_000);
+    const aoFocar = () => void revalidar();
+    window.addEventListener('focus', aoFocar);
+    return () => {
+      window.clearInterval(intervalo);
+      window.removeEventListener('focus', aoFocar);
+    };
+  }, [session, acesso?.liberado]);
+
+  useEffect(() => {
+    if (!acesso?.liberado) return;
     const syncOfflineQueue = () => { void processarFilaSync(); };
     window.addEventListener('online', syncOfflineQueue);
     syncOfflineQueue();
     return () => window.removeEventListener('online', syncOfflineQueue);
-  }, []);
+  }, [acesso?.liberado]);
 
   if (verificandoSessao) {
     const isDark = tema === 'dark';
@@ -349,6 +455,9 @@ function AppContent() {
   }
   if (session && location.pathname === '/login') {
     return <Navigate to="/" replace />;
+  }
+  if (session && acesso && !acesso.liberado) {
+    return <AcessoBloqueado acesso={acesso} tema={tema} />;
   }
 
   const content = {

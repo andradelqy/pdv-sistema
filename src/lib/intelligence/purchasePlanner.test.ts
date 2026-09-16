@@ -30,4 +30,13 @@ describe('planejador de compras', () => {
     expect(item.quantidadeSugerida).toBeGreaterThanOrEqual(12)
     expect(item.quantidadeSugerida % 6).toBe(0)
   })
+
+  it('desconta pedidos em rascunho para não sugerir compra duplicada', () => {
+    const hoje = new Date().toISOString().slice(0, 10)
+    const vendas: Venda[] = [{ id: 'v-3', data: hoje, pagamento: 'pix', total: 200, criadoEm: new Date().toISOString(), itens: [{ produtoId: produto.id, quantidade: 10, precoUnit: 20 }] }]
+    const semPedido = montarPlanoCompra([produto], vendas, [], 'loja-teste')[0]
+    const comPedido = montarPlanoCompra([produto], vendas, [{ id: crypto.randomUUID(), fornecedorId: 'f', status: 'draft', itens: [{ produtoId: produto.id, quantidade: semPedido.quantidadeSugerida, precoCusto: 10 }], dataPedido: hoje, lojaId: 'loja-teste' }], 'loja-teste')[0]
+    expect(comPedido.emTransito).toBe(semPedido.quantidadeSugerida)
+    expect(comPedido.quantidadeSugerida).toBeLessThanOrEqual(semPedido.quantidadeSugerida)
+  })
 })

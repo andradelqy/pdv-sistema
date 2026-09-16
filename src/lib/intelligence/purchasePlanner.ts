@@ -30,7 +30,7 @@ function vendasParaProdutoFisico(vendas: Venda[], produtos: Produto[]): Venda[] 
 }
 
 function quantidadeEmTransito(produtoId: string, pedidos: PedidoCompra[]) {
-  return pedidos.filter(p => p.status === 'pending' || p.status === 'in_transit').reduce((total, pedido) => total + (pedido.itens.find(item => item.produtoId === produtoId)?.quantidade || 0), 0)
+  return pedidos.filter(p => p.status === 'draft' || p.status === 'pending' || p.status === 'in_transit').reduce((total, pedido) => total + (pedido.itens.find(item => item.produtoId === produtoId)?.quantidade || 0), 0)
 }
 
 /**
