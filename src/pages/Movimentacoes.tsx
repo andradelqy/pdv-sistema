@@ -4,12 +4,14 @@ import { toast } from '../lib/toast'
 import { Plus, Trash2 } from 'lucide-react'
 
 export function Movimentacoes() {
-  const { produtos, movimentacoes, addMovimentacao, deleteMovimentacao } = useStore()
+  const { produtos, movimentacoes, addMovimentacao, currentUser } = useStore()
   const [modal, setModal] = useState(false)
   const [produtoId, setProdutoId] = useState('')
   const [search, setSearch] = useState('')
   const [showDropdown, setShowDropdown] = useState(false)
   const [tipo, setTipo] = useState<'entrada' | 'saida'>('entrada')
+  const [modo, setModo] = useState<'movimentacao' | 'contagem'>('movimentacao')
+  const [motivo, setMotivo] = useState<'compra' | 'perda' | 'quebra' | 'validade' | 'devolucao' | 'outro'>('compra')
   const [quantidade, setQuantidade] = useState(1)
   const [data, setData] = useState(hoje())
   const [lote, setLote] = useState('')
@@ -18,7 +20,8 @@ export function Movimentacoes() {
 
   const filteredProds = produtos.filter(p => 
     p.nome.toLowerCase().includes(search.toLowerCase()) ||
-    p.sku.toLowerCase().includes(search.toLowerCase())
+    p.sku.toLowerCase().includes(search.toLowerCase()) ||
+    Boolean(p.barcode?.includes(search))
   )
 
   const [filterProd, setFilterProd] = useState('')
@@ -43,18 +46,22 @@ export function Movimentacoes() {
   function salvar() {
     if (!produtoId || quantidade <= 0) { toast('Preencha produto e quantidade', 'warning'); return }
     const p = produtos.find(x => x.id === produtoId)!
-    if (tipo === 'saida' && p.estoque < quantidade) {
+    const diferenca = modo === 'contagem' ? quantidade - p.estoque : (tipo === 'entrada' ? quantidade : -quantidade)
+    if (diferenca === 0) { toast('A contagem é igual ao estoque atual.', 'warning'); return }
+    const tipoFinal: 'entrada' | 'saida' = diferenca > 0 ? 'entrada' : 'saida'
+    const quantidadeFinal = Math.abs(diferenca)
+    if (tipoFinal === 'saida' && p.estoque < quantidadeFinal) {
       toast('Estoque insuficiente', 'danger'); return
     }
-    addMovimentacao({ produtoId, tipo, quantidade, data, lote, validade, obs })
-    toast(`${tipo === 'entrada' ? 'Entrada' : 'Saída'} registrada`)
+    addMovimentacao({ produtoId, tipo: tipoFinal, quantidade: quantidadeFinal, data, lote, validade, obs, motivo: modo === 'contagem' ? 'inventario' : motivo, aprovadoPor: currentUser?.id, aprovadoEm: new Date().toISOString() })
+    toast(modo === 'contagem' ? 'Contagem aplicada ao estoque' : `${tipoFinal === 'entrada' ? 'Entrada' : 'Saída'} registrada`)
     setModal(false)
     setProdutoId(''); setSearch(''); setQuantidade(1); setLote(''); setValidade(''); setObs('')
   }
 
   function remover(id: string) {
-    if (!confirm('Excluir movimentação?')) return
-    deleteMovimentacao(id); toast('Removida', 'warning')
+    void id
+    toast('Movimentações auditadas não podem ser apagadas. Registre um ajuste compensatório.', 'warning')
   }
 
   return (
@@ -88,11 +95,11 @@ export function Movimentacoes() {
         <div className="overflow-x-auto">
           <table className="tbl-adega">
             <thead><tr>
-              <th>Data</th><th>Produto</th><th>Tipo</th><th>Qtd</th><th>Lote</th><th>Validade</th><th>Obs</th><th>Ações</th>
+              <th>Data</th><th>Produto</th><th>Tipo</th><th>Motivo</th><th>Qtd</th><th>Lote</th><th>Validade</th><th>Obs</th><th>Ações</th>
             </tr></thead>
             <tbody>
               {pageItems.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-8 text-muted-foreground">Nenhuma movimentação</td></tr>
+                <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">Nenhuma movimentação</td></tr>
               ) : pageItems.map(m => {
                 const p = produtos.find(x => x.id === m.produtoId)
                 return (
@@ -100,6 +107,7 @@ export function Movimentacoes() {
                     <td>{fmtData(m.data)}</td>
                     <td>{p?.nome || 'Removido'}</td>
                     <td><span className={`badge-adega ${m.tipo === 'entrada' ? 'badge-success' : 'badge-danger'}`}>{m.tipo === 'entrada' ? 'Entrada' : 'Saída'}</span></td>
+                    <td className="capitalize">{m.motivo || '—'}</td>
                     <td className={`font-bold ${m.tipo === 'entrada' ? 'text-success' : 'text-destructive'}`}>{m.tipo === 'entrada' ? '+' : '-'}{m.quantidade}</td>
                     <td>{m.lote || '—'}</td>
                     <td>{m.validade ? fmtData(m.validade) : '—'}</td>
@@ -128,6 +136,10 @@ export function Movimentacoes() {
               <button onClick={() => setModal(false)} className="text-muted-foreground hover:text-foreground">✕</button>
             </div>
             <div className="flex flex-col gap-3 text-sm">
+              <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1">
+                <button onClick={() => setModo('movimentacao')} className={`rounded-md p-2 ${modo === 'movimentacao' ? 'bg-background shadow-sm font-semibold' : ''}`}>Entrada/saída</button>
+                <button onClick={() => setModo('contagem')} className={`rounded-md p-2 ${modo === 'contagem' ? 'bg-background shadow-sm font-semibold' : ''}`}>Contagem física</button>
+              </div>
               <div>
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Produto *</label>
                 <div className="relative">
@@ -158,16 +170,22 @@ export function Movimentacoes() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Tipo</label>
-                  <select className="w-full p-2 border border-border rounded-lg bg-background" value={tipo} onChange={e => setTipo(e.target.value as 'entrada' | 'saida')}>
+                  <select disabled={modo === 'contagem'} className="w-full p-2 border border-border rounded-lg bg-background disabled:opacity-50" value={tipo} onChange={e => setTipo(e.target.value as 'entrada' | 'saida')}>
                     <option value="entrada">Entrada</option>
                     <option value="saida">Saída</option>
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Quantidade</label>
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-1">{modo === 'contagem' ? 'Estoque contado' : 'Quantidade'}</label>
                   <input type="number" min={1} className="w-full p-2 border border-border rounded-lg bg-background" value={quantidade} onChange={e => setQuantidade(parseInt(e.target.value) || 1)} />
                 </div>
               </div>
+              {modo === 'movimentacao' && <div>
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Motivo *</label>
+                <select className="w-full p-2 border border-border rounded-lg bg-background" value={motivo} onChange={e => setMotivo(e.target.value as typeof motivo)}>
+                  <option value="compra">Compra/recebimento</option><option value="perda">Perda</option><option value="quebra">Quebra</option><option value="validade">Vencimento</option><option value="devolucao">Devolução</option><option value="outro">Outro</option>
+                </select>
+              </div>}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Data</label>

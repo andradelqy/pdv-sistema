@@ -9,6 +9,7 @@ const EMPTY: Omit<Produto, 'id'> = {
   sku: '', nome: '', barcode: '', descricao: '', categoria: '', fornecedor: '',
   leadTime: 7, precoCompra: 0, precoVenda: 0, imposto: 0, frete: 0, comissao: 0,
   margemAlvo: 30, estoque: 0, estoqueMin: 5, pontoPedido: 10, qualidade: 3,
+  quantidadeMinimaCompra: 1, multiploCompra: 1,
 }
 
 export function Produtos() {
@@ -233,6 +234,8 @@ export function Produtos() {
                 ['Categoria', 'categoria', 'text'],
                 ['Fornecedor', 'fornecedor', 'text'],
                 ['Lead Time (dias)', 'leadTime', 'number'],
+                ['Compra mínima', 'quantidadeMinimaCompra', 'number'],
+                ['Múltiplo/caixa', 'multiploCompra', 'number'],
                 ['Custo *', 'precoCompra', 'number'],
                 ['Venda *', 'precoVenda', 'number'],
                 ['Margem Alvo (%)', 'margemAlvo', 'number'],

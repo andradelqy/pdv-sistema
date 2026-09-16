@@ -22,4 +22,12 @@ describe('planejador de compras', () => {
     expect(item.quantidadeSugerida).toBeGreaterThan(0)
     expect(item.politica.demandForecast).toBeGreaterThan(0)
   })
+
+  it('respeita quantidade mínima e múltiplo da embalagem', () => {
+    const hoje = new Date().toISOString().slice(0, 10)
+    const vendas: Venda[] = [{ id: 'v-2', data: hoje, pagamento: 'pix', total: 20, criadoEm: new Date().toISOString(), itens: [{ produtoId: produto.id, quantidade: 1, precoUnit: 20 }] }]
+    const [item] = montarPlanoCompra([{ ...produto, quantidadeMinimaCompra: 12, multiploCompra: 6 }], vendas, [], 'loja-teste')
+    expect(item.quantidadeSugerida).toBeGreaterThanOrEqual(12)
+    expect(item.quantidadeSugerida % 6).toBe(0)
+  })
 })

@@ -50,7 +50,12 @@ export function montarPlanoCompra(produtos: Produto[], vendas: Venda[], pedidos:
     const demandaMedida = politica.demandForecast > 0
     // A quantidade do motor é o alvo principal; a diferença até o ponto de
     // pedido é uma proteção contra qualquer arredondamento a zero.
-    const quantidadeSugerida = demandaMedida ? Math.max(politica.recommendedPurchaseQty, faltaAtePonto) : 0
+    const necessidadeBase = demandaMedida ? Math.max(politica.recommendedPurchaseQty, faltaAtePonto) : 0
+    const minimoCompra = Math.max(1, Math.ceil(produto.quantidadeMinimaCompra || 1))
+    const multiploCompra = Math.max(1, Math.ceil(produto.multiploCompra || 1))
+    const quantidadeSugerida = necessidadeBase > 0
+      ? Math.ceil(Math.max(necessidadeBase, minimoCompra) / multiploCompra) * multiploCompra
+      : 0
     const semCusto = !Number.isFinite(produto.precoCompra) || produto.precoCompra <= 0
     const semHistorico = !demandaMedida
     const bloqueio = semCusto ? 'Cadastre um custo de compra maior que zero.' : semHistorico && produto.estoque <= 0 ? 'Não há itens de venda vinculados a este produto para calcular a demanda.' : undefined

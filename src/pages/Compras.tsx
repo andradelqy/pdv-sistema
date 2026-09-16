@@ -70,7 +70,7 @@ export function Compras() {
       return grupos
     }, {})
     Object.entries(porFornecedor).forEach(([fornecedorId, itens]) => addPedidoCompra({
-      id: `ped_${Math.random().toString(36).slice(2, 11)}`,
+      id: crypto.randomUUID(),
       fornecedorId,
       status: modo === 'autonomous' ? 'pending' : 'draft',
       itens: itens.map(item => ({ produtoId: item.produto.id, quantidade: item.quantidade, precoCusto: item.produto.precoCompra })),

@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { useStore, fmtR, hoje, cortarData, type Cliente } from '../lib/store'
 import { toast } from '../lib/toast'
 import { Plus, Pencil, Trash2, Search, MessageCircle, Check, DollarSign } from 'lucide-react'
+import { segmentarCliente } from '../lib/analytics'
 
-const EMPTY: Omit<Cliente, 'id'> = { nome: '', telefone: '', limite: 100, saldo: 0, compras: 0 }
+const EMPTY: Omit<Cliente, 'id'> = { nome: '', telefone: '', email: '', tags: [], observacoes: '', limite: 100, saldo: 0, compras: 0 }
 
 export function Clientes() {
   const { clientes, vendas, addCliente, updateCliente, deleteCliente, quitarFiado } = useStore()
@@ -17,7 +18,7 @@ export function Clientes() {
   const [valorQuitacao, setValorQuitacao] = useState<string>('')
   const [formaPagamentoQuitacao, setFormaPagamentoQuitacao] = useState<string>('dinheiro')
 
-  const filtered = clientes.filter(c => !busca || c.nome.toLowerCase().includes(busca.toLowerCase()))
+  const filtered = clientes.filter(c => !busca || [c.nome, c.telefone, c.email, ...(c.tags || [])].some(valor => valor?.toLowerCase().includes(busca.toLowerCase())))
 
   function openNew() { setForm(EMPTY); setEditId(null); setModal(true) }
   function openEdit(c: Cliente) { setForm(c); setEditId(c.id); setModal(true) }
@@ -129,11 +130,11 @@ export function Clientes() {
         <div className="overflow-x-auto">
           <table className="tbl-adega">
             <thead><tr>
-              <th>Nome</th><th>Telefone</th><th>Limite</th><th>Fiado</th><th>Compras</th><th>Uso Crédito</th><th>Cobrança</th><th>Ações</th>
+              <th>Nome</th><th>Segmento</th><th>Telefone</th><th>Limite</th><th>Fiado</th><th>Compras</th><th>Uso Crédito</th><th>Cobrança</th><th>Ações</th>
             </tr></thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-8 text-muted-foreground">Nenhum cliente cadastrado</td></tr>
+                <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">Nenhum cliente cadastrado</td></tr>
               ) : filtered.map(c => {
                 const pct = pctSaldo(c)
                 const exibirBotaoCobrar = podeCobrar(c)
@@ -142,6 +143,7 @@ export function Clientes() {
                 return (
                   <tr key={c.id}>
                     <td className="font-medium">{c.nome}</td>
+                    <td><span className="badge-adega badge-info">{segmentarCliente(c, vendas)}</span></td>
                     <td className="text-muted-foreground">{c.telefone || '—'}</td>
                     <td>{fmtR(c.limite)}</td>
                     <td className={pct > 90 ? 'text-destructive font-semibold' : ''}>{fmtR(c.saldo)}</td>
@@ -198,7 +200,7 @@ export function Clientes() {
               <button onClick={() => setModal(false)} className="text-muted-foreground hover:text-foreground">✕</button>
             </div>
             <div className="flex flex-col gap-3 text-sm">
-              {([['Nome *', 'nome', 'text'], ['Telefone', 'telefone', 'text'], ['Limite (R$)', 'limite', 'number']] as [string, keyof Omit<Cliente, 'id'>, string][]).map(([label, key, type]) => (
+              {([['Nome *', 'nome', 'text'], ['Telefone', 'telefone', 'text'], ['E-mail', 'email', 'email'], ['Limite (R$)', 'limite', 'number']] as [string, keyof Omit<Cliente, 'id'>, string][]).map(([label, key, type]) => (
                 <div key={key}>
                   <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-1">{label}</label>
                   <input type={type} step={type === 'number' ? '0.01' : undefined}
@@ -207,6 +209,14 @@ export function Clientes() {
                     onChange={e => setForm(f => ({ ...f, [key]: type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value }))} />
                 </div>
               ))}
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Tags (separadas por vírgula)</label>
+                <input className="w-full p-2 border border-border rounded-lg bg-background" value={(form as Cliente).tags?.join(', ') || ''} onChange={e => setForm(f => ({ ...f, tags: e.target.value.split(',').map(tag => tag.trim()).filter(Boolean) }))}/>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Observações</label>
+                <textarea className="w-full p-2 border border-border rounded-lg bg-background" value={(form as Cliente).observacoes || ''} onChange={e => setForm(f => ({ ...f, observacoes: e.target.value }))}/>
+              </div>
             </div>
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => setModal(false)} className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted">Cancelar</button>

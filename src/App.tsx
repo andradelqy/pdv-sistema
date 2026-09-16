@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import type { Session } from '@supabase/supabase-js';
 import {
   BarChart3, Bell, Boxes, ChartNoAxesCombined, Clock3, Database, Gauge, MapPinned,
-  Menu, Moon, Package, ShoppingCart, Sun, Truck, Users, Wallet, LogOut, Loader2
+  Menu, Moon, Package, ShoppingCart, Sun, Truck, Users, Wallet, LogOut, Loader2, FileChartColumn
 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { useStore } from './lib/store';
@@ -18,13 +18,14 @@ const Movimentacoes = lazy(() => import('./pages/Movimentacoes').then(module => 
 const Compras = lazy(() => import('./pages/Compras').then(module => ({ default: module.Compras })));
 const Clientes = lazy(() => import('./pages/Clientes').then(module => ({ default: module.Clientes })));
 const Analises = lazy(() => import('./pages/Analises').then(module => ({ default: module.Analises })));
+const Relatorios = lazy(() => import('./pages/Relatorios').then(module => ({ default: module.Relatorios })));
 const PontoEletronico = lazy(() => import('./PontoEletronico').then(module => ({ default: module.PontoEletronico })));
 const AppEntregador = lazy(() => import('./AppEntregador').then(module => ({ default: module.AppEntregador })));
 const PainelMapa = lazy(() => import('./PainelMapa').then(module => ({ default: module.PainelMapa })));
 import { Termos } from './pages/Termos';
 import { Privacidade } from './pages/Privacidade';
 
-type Page = 'dashboard' | 'pdv' | 'entregas_pdv' | 'ponto' | 'entregador' | 'mapa' | 'produtos' | 'movimentacoes' | 'compras' | 'clientes' | 'caixa' | 'historico' | 'abc' | 'qpr' | 'alertas' | 'backup';
+type Page = 'dashboard' | 'pdv' | 'entregas_pdv' | 'ponto' | 'entregador' | 'mapa' | 'produtos' | 'movimentacoes' | 'compras' | 'clientes' | 'caixa' | 'relatorios' | 'historico' | 'abc' | 'qpr' | 'alertas' | 'backup';
 
 const nav: { group: string; items: { page: Page; label: string; icon: typeof Gauge }[] }[] = [
   { group: 'Visão Geral', items: [{ page: 'dashboard', label: 'Dashboard', icon: Gauge }] },
@@ -32,13 +33,13 @@ const nav: { group: string; items: { page: Page; label: string; icon: typeof Gau
   { group: 'Estoque', items: [{ page: 'produtos', label: 'Produtos', icon: Package }, { page: 'movimentacoes', label: 'Movimentações', icon: Boxes }, { page: 'compras', label: 'Compras', icon: ShoppingCart }] },
   { group: 'Pessoas', items: [{ page: 'clientes', label: 'Clientes', icon: Users }, { page: 'ponto', label: 'Ponto Eletrônico', icon: Clock3 }] },
   { group: 'Entregas', items: [{ page: 'entregador', label: 'App Entregador', icon: Truck }, { page: 'mapa', label: 'Rastreamento', icon: MapPinned }] },
-  { group: 'Financeiro', items: [{ page: 'caixa', label: 'Caixa', icon: Wallet }] },
+  { group: 'Financeiro', items: [{ page: 'caixa', label: 'Caixa', icon: Wallet }, { page: 'relatorios', label: 'Relatórios', icon: FileChartColumn }] },
   { group: 'Análise', items: [{ page: 'abc', label: 'Curva ABC', icon: BarChart3 }, { page: 'qpr', label: 'Matriz QPR', icon: ChartNoAxesCombined }, { page: 'alertas', label: 'Alertas', icon: Bell }] },
   { group: 'Sistema', items: [{ page: 'backup', label: 'Backup', icon: Database }] },
 ];
 
 const titles: Record<Page, string> = {
-  dashboard: 'Dashboard', pdv: 'Ponto de Venda', entregas_pdv: 'PDV Entregas', ponto: 'Ponto Eletrônico', entregador: 'App do Entregador', mapa: 'Rastreamento de Entregas', produtos: 'Produtos', movimentacoes: 'Movimentações', compras: 'Compras', clientes: 'Clientes', caixa: 'Caixa', historico: 'Histórico de Vendas', abc: 'Curva ABC', qpr: 'Matriz QPR', alertas: 'Alertas', backup: 'Backup'
+  dashboard: 'Dashboard', pdv: 'Ponto de Venda', entregas_pdv: 'PDV Entregas', ponto: 'Ponto Eletrônico', entregador: 'App do Entregador', mapa: 'Rastreamento de Entregas', produtos: 'Produtos', movimentacoes: 'Movimentações', compras: 'Compras', clientes: 'Clientes', caixa: 'Caixa', relatorios: 'Relatórios', historico: 'Histórico de Vendas', abc: 'Curva ABC', qpr: 'Matriz QPR', alertas: 'Alertas', backup: 'Backup'
 };
 
 const paginasPorPapel: Record<'owner' | 'gerente' | 'atendente' | 'entregador', Page[]> = {
@@ -362,6 +363,7 @@ function AppContent() {
     entregador: <AppEntregador />,
     mapa: <PainelMapa />,
     caixa: <Analises tipo="caixa" />,
+    relatorios: <Relatorios />,
     historico: <Analises tipo="historico" />,
     abc: <Analises tipo="abc" />,
     qpr: <Analises tipo="qpr" />,

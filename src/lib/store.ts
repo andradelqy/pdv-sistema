@@ -33,6 +33,10 @@ export type Produto = {
   automaticQualityScore?: number
   automaticQualityLevel?: number
   confidenceScore?: number
+  /** Menor quantidade aceita pelo fornecedor em um pedido. */
+  quantidadeMinimaCompra?: number
+  /** Caixa/fardo: a recomendação sempre é arredondada para este múltiplo. */
+  multiploCompra?: number
 }
 
 export type Movimentacao = {
@@ -44,6 +48,9 @@ export type Movimentacao = {
   lote?: string
   validade?: string
   obs?: string
+  motivo?: 'compra' | 'venda' | 'inventario' | 'perda' | 'quebra' | 'validade' | 'devolucao' | 'outro'
+  aprovadoPor?: string
+  aprovadoEm?: string
 }
 
 export type ItemVenda = {
@@ -73,6 +80,9 @@ export type Cliente = {
   saldo: number
   compras: number
   ultimaCobranca?: string
+  email?: string
+  tags?: string[]
+  observacoes?: string
 }
 
 export type EntradaCaixa = {

@@ -56,7 +56,7 @@ create table if not exists public.rastreio_entregadores (
 create index if not exists rastreio_entregadores_loja_atualizado_idx on public.rastreio_entregadores(loja_id, atualizado_em desc);
 
 create table if not exists public.pedidos_compra (
-  id text primary key,
+  id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   loja_id text not null,
   fornecedor_id text not null,
@@ -68,7 +68,7 @@ create table if not exists public.itens_pedido_compra (
   id bigserial primary key,
   user_id uuid not null references auth.users(id) on delete cascade,
   loja_id text not null,
-  pedido_id text not null references public.pedidos_compra(id) on delete cascade,
+  pedido_id uuid not null references public.pedidos_compra(id) on delete cascade,
   produto_id text not null,
   quantidade_solicitada integer not null check (quantidade_solicitada > 0),
   preco_unit_custo numeric(12,2) not null default 0,
