@@ -29,4 +29,14 @@ describe('controle de estoque por composição', () => {
   it('mantém ao menos uma unidade para produto sem histórico', () => {
     expect(sugerirEstoqueMinimo(garrafa, [], [])).toBe(1)
   })
+
+  it('não trata devolução como demanda de reposição', () => {
+    const devolucao: Venda = {
+      id: 'dev1', data: '2026-09-17', pagamento: 'devolucao', total: -5,
+      criadoEm: '2026-09-17T12:00:00.000Z',
+      itens: [{ produtoId: 'dose', produtoNome: 'Dose', quantidade: 1, precoUnit: -5 }],
+    }
+
+    expect(vendasParaControleEstoque([devolucao], [garrafa, dose])).toEqual([])
+  })
 })

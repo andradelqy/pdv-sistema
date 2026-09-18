@@ -707,7 +707,7 @@ DevolucaoModal.displayName = 'DevolucaoModal'
 
 // ---------- Componente principal PDV ----------
 export function PDV() {
-  const { produtos, clientes, addVenda, updateProduto } = useStore()
+  const { produtos, clientes, addVenda } = useStore()
 
   // Hooks
   const { carrinho, addItem, updateQty, removeItem, limpar, total, itensCount } = useCart()
@@ -837,16 +837,8 @@ export function PDV() {
     return () => window.removeEventListener('keydown', onKey)
   }, [carrinho, finalizarVenda, limpar])
 
-  // Devolução – agora com updateProduto completo
+  // A store e o RPC atômico devolvem o estoque uma única vez.
   const handleDevolver = useCallback((vendaId: string, itens: any[]) => {
-    // Atualizar estoque (adicionar de volta)
-    for (const item of itens) {
-      const p = produtos.find(x => x.id === item.produtoId)
-      if (p) {
-        const produtoAtualizado = { ...p, estoque: p.estoque + item.quantidade }
-        updateProduto(produtoAtualizado)
-      }
-    }
     // Criar venda de devolução (valores negativos)
     const vendaDevolucao = {
       data: hoje(),
@@ -858,7 +850,7 @@ export function PDV() {
     }
     addVenda(vendaDevolucao)
     toast('Devolução realizada com sucesso')
-  }, [produtos, updateProduto, addVenda])
+  }, [addVenda])
 
   // Impressão do cupom
   const imprimirCupom = useCallback(() => {

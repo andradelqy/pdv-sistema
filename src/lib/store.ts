@@ -163,7 +163,9 @@ export type PedidoCompra = {
 }
 
 export function vendasParaControleEstoque(vendas: Venda[], produtos: Produto[]): Venda[] {
-  return vendas.map(venda => {
+  // Devolução recompõe estoque, mas não representa demanda e não pode inflar
+  // previsão, estoque mínimo ou sugestão de compra.
+  return vendas.filter(venda => venda.pagamento !== 'devolucao').map(venda => {
     const itens = new Map<string, ItemVenda>()
     venda.itens.forEach(item => {
       const produto = produtos.find(p => p.id === item.produtoId)
@@ -319,11 +321,12 @@ export const useStore = create<Store>()(
         const caixaId = useStore.getState().caixaAberto?.id
         if (!caixaId) return
         set(s => {
+          const devolucao = v.pagamento === 'devolucao'
           const consumo = consumoEstoque(v.itens, s.produtos)
           const produtosComEstoque = s.produtos.map(p => {
             const quantidade = consumo.get(p.id)
             if (!quantidade) return p
-            const novoEstoque = Math.max(0, p.estoque - quantidade)
+            const novoEstoque = devolucao ? p.estoque + quantidade : Math.max(0, p.estoque - quantidade)
             return { ...p, estoque: novoEstoque }
           })
           const prods = recalcularPoliticaEstoque(produtosComEstoque, [...s.vendas, venda], s.pedidosCompra)
@@ -338,8 +341,10 @@ export const useStore = create<Store>()(
               }]
             : s.caixaEntradas
           const movimentacoes = [...s.movimentacoes, ...v.itens.map(item => ({
-            id: uid(), produtoId: item.produtoId, tipo: 'saida' as const,
-            quantidade: item.quantidade, data: v.data, obs: `Venda ${v.pagamento}`
+            id: uid(), produtoId: item.produtoId, tipo: devolucao ? 'entrada' as const : 'saida' as const,
+            quantidade: item.quantidade, data: v.data,
+            motivo: devolucao ? 'devolucao' as const : 'venda' as const,
+            obs: devolucao ? `Devolução ${v.obs || ''}`.trim() : `Venda ${v.pagamento}`
           }))]
           return { vendas: [...s.vendas, venda], produtos: prods, clientes, caixaEntradas, movimentacoes }
         })
