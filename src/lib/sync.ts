@@ -8,6 +8,7 @@ export type SyncJob = {
   opName: string;
   args: unknown[];
   createdAt: number;
+  updatedAt: number;
   attempts: number;
   lastError?: string;
 };
@@ -15,33 +16,70 @@ export type SyncJob = {
 export type SyncQueueStatus = {
   pending: number;
   failed: number;
+  syncing?: boolean;
   lastProcessedAt?: number;
+  lastError?: string;
+  nextRetryAt?: number;
 };
 
 const QUEUE_KEY = 'sync_queue';
 const STATUS_KEY = 'sync_queue_status';
 const SYNC_EVENT = 'orbita:sync-status';
+const RETRY_BASE_MS = 2_000;
+const RETRY_MAX_MS = 60_000;
+
+let processamentoAtual: Promise<SyncQueueStatus> | null = null;
+let sincronizacaoAutomaticaAtiva = false;
+let timerRetry: number | undefined;
 
 function readQueue(): SyncJob[] {
   try {
     const value = JSON.parse(localStorage.getItem(QUEUE_KEY) ?? '[]') as Array<Partial<SyncJob> & { timestamp?: number }>;
     return value.filter(job => job?.opName && Array.isArray(job.args)).map(job => ({
       id: job.id ?? crypto.randomUUID(), opName: String(job.opName), args: job.args!,
-      createdAt: Number(job.createdAt ?? job.timestamp ?? Date.now()), attempts: Number(job.attempts ?? 0), lastError: job.lastError,
+      createdAt: Number(job.createdAt ?? job.timestamp ?? Date.now()),
+      updatedAt: Number(job.updatedAt ?? job.createdAt ?? job.timestamp ?? Date.now()),
+      attempts: Number(job.attempts ?? 0), lastError: job.lastError,
     }));
   } catch { return []; }
 }
 
-function writeQueue(queue: SyncJob[], lastProcessedAt?: number) {
+function readStoredStatus(): SyncQueueStatus {
+  try { return JSON.parse(localStorage.getItem(STATUS_KEY) ?? '{}') as SyncQueueStatus; }
+  catch { return { pending: 0, failed: 0 }; }
+}
+
+function writeQueue(queue: SyncJob[], changes: Partial<SyncQueueStatus> = {}) {
   localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
-  const status: SyncQueueStatus = { pending: queue.length, failed: queue.filter(job => job.attempts > 0).length, lastProcessedAt };
+  const previous = readStoredStatus();
+  const lastError = [...queue].reverse().find(job => job.lastError)?.lastError;
+  const status: SyncQueueStatus = {
+    ...previous,
+    pending: queue.length,
+    failed: queue.filter(job => job.attempts > 0).length,
+    syncing: previous.syncing ?? false,
+    lastError,
+    ...changes,
+  };
+  if (!queue.length) {
+    status.lastError = undefined;
+    status.nextRetryAt = undefined;
+  }
   localStorage.setItem(STATUS_KEY, JSON.stringify(status));
   window.dispatchEvent(new CustomEvent(SYNC_EVENT, { detail: status }));
+  return status;
 }
 
 export function getSyncQueueStatus(): SyncQueueStatus {
-  try { return JSON.parse(localStorage.getItem(STATUS_KEY) ?? '{"pending":0,"failed":0}') as SyncQueueStatus; }
-  catch { return { pending: 0, failed: 0 }; }
+  const queue = readQueue();
+  const stored = readStoredStatus();
+  return {
+    ...stored,
+    pending: queue.length,
+    failed: queue.filter(job => job.attempts > 0).length,
+    syncing: Boolean(processamentoAtual),
+    lastError: [...queue].reverse().find(job => job.lastError)?.lastError,
+  };
 }
 
 export function subscribeSyncQueueStatus(listener: (status: SyncQueueStatus) => void) {
@@ -50,18 +88,57 @@ export function subscribeSyncQueueStatus(listener: (status: SyncQueueStatus) => 
   return () => window.removeEventListener(SYNC_EVENT, callback);
 }
 
-/** Enfileira uma mutação com deduplicação por operação e identificador do registro. */
+/** Operações sem identificador não podem ser deduplicadas sem risco de perda. */
+export function chaveDedupeSync(opName: string, args: unknown[]): string | null {
+  const first = args[0];
+  const entityId = typeof first === 'string'
+    ? first
+    : first && typeof first === 'object' && 'id' in first
+      ? String((first as { id?: unknown }).id ?? '')
+      : '';
+  if (!entityId) return null;
+  const lojaId = typeof args[1] === 'string'
+    ? args[1]
+    : typeof args[2] === 'string'
+      ? args[2]
+      : '';
+  return `${opName}:${entityId}:${lojaId}`;
+}
+
+export function calcularAtrasoRetry(attempts: number) {
+  return Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(Math.max(0, attempts), 5));
+}
+
+function agendarSincronizacao(delayMs: number) {
+  if (!sincronizacaoAutomaticaAtiva || !readQueue().length) return;
+  if (timerRetry !== undefined) window.clearTimeout(timerRetry);
+  const nextRetryAt = Date.now() + delayMs;
+  writeQueue(readQueue(), { nextRetryAt });
+  timerRetry = window.setTimeout(() => {
+    timerRetry = undefined;
+    void processarFilaSync();
+  }, delayMs);
+}
+
+/** Enfileira uma mutação e aciona o processador automático. */
 export function enfileirarSync(opName: string, args: unknown[], error?: unknown) {
   const queue = readQueue();
-  const entityId = (args[0] as { id?: string } | undefined)?.id ?? '';
-  const existing = queue.find(job => job.opName === opName && ((job.args[0] as { id?: string } | undefined)?.id ?? '') === entityId);
+  const dedupeKey = chaveDedupeSync(opName, args);
+  const existing = dedupeKey
+    ? queue.find(job => chaveDedupeSync(job.opName, job.args) === dedupeKey)
+    : undefined;
   const message = error instanceof Error ? error.message : String(error ?? 'Falha de sincronização');
+  const now = Date.now();
   if (existing) {
-    existing.args = args; existing.lastError = message;
+    existing.args = args;
+    existing.updatedAt = now;
+    existing.attempts = 0;
+    existing.lastError = message;
   } else {
-    queue.push({ id: crypto.randomUUID(), opName, args, createdAt: Date.now(), attempts: 0, lastError: message });
+    queue.push({ id: crypto.randomUUID(), opName, args, createdAt: now, updatedAt: now, attempts: 0, lastError: message });
   }
-  writeQueue(queue);
+  writeQueue(queue, { syncing: Boolean(processamentoAtual), nextRetryAt: undefined });
+  agendarSincronizacao(750);
 }
 
 async function userOrThrow(): Promise<string> {
@@ -70,7 +147,13 @@ async function userOrThrow(): Promise<string> {
   return data.user.id;
 }
 
-function check(error: { message: string } | null): void { if (error) throw new Error(error.message); }
+function check(error: { message: string; hint?: string | null; details?: string | null; code?: string } | null): void {
+  if (!error) return;
+  const code = error.code ? `[${error.code}] ` : '';
+  const hint = error.hint ? ` Sugestão: ${error.hint}` : '';
+  const details = error.details ? ` Detalhes: ${error.details}` : '';
+  throw new Error(`${code}${error.message}${hint}${details}`);
+}
 
 export type CargaRemota = { produtos: Produto[]; movimentacoes: Movimentacao[]; vendas: Venda[]; clientes: Cliente[]; caixaEntradas: EntradaCaixa[]; caixas: Caixa[]; entregas: PedidoEntrega[]; pedidosCompra: PedidoCompra[]; };
 
@@ -141,19 +224,100 @@ export async function upsertPedidoCompra(p: PedidoCompra, lojaId: string) { cons
 
 type SyncOperation = (...args: never[]) => Promise<void>;
 const operations: Record<string, SyncOperation> = { upsertProduto, deleteProduto, insertMovimentacao, deleteMovimentacao, upsertCliente, deleteCliente, upsertCaixa, insertCaixaEntrada, insertVenda, confirmarVendaAtomica, upsertEntrega, upsertPedidoCompra };
-export async function processarFilaSync(): Promise<SyncQueueStatus> {
+
+async function executarFilaSync(): Promise<SyncQueueStatus> {
   const jobs = readQueue();
-  if (!navigator.onLine) return getSyncQueueStatus();
-  const pending: SyncJob[] = [];
+  if (!jobs.length) return writeQueue([], { syncing: false, lastProcessedAt: Date.now() });
+  if (!navigator.onLine) {
+    return writeQueue(jobs, { syncing: false, lastError: 'Sem conexão com a internet.', nextRetryAt: undefined });
+  }
+
+  writeQueue(jobs, { syncing: true, nextRetryAt: undefined });
+  const resultados = new Map<string, { original: SyncJob; failed?: SyncJob }>();
+
   for (const job of jobs) {
     const operation = operations[job.opName];
     try {
-      if (!operation) throw new Error('Operação de sync desconhecida');
+      if (!operation) throw new Error(`Operação de sincronização desconhecida: ${job.opName}`);
       await (operation as unknown as (...args: unknown[]) => Promise<void>)(...job.args);
+      resultados.set(job.id, { original: job });
     } catch (error) {
-      pending.push({ ...job, attempts: job.attempts + 1, lastError: error instanceof Error ? error.message : String(error) });
+      const lastError = error instanceof Error ? error.message : String(error);
+      console.error(`[sync] ${job.opName} falhou`, error);
+      resultados.set(job.id, {
+        original: job,
+        failed: { ...job, attempts: job.attempts + 1, lastError },
+      });
     }
   }
-  const processedAt = Date.now(); writeQueue(pending, processedAt);
-  return getSyncQueueStatus();
+
+  // Preserva itens que chegaram enquanto a fila era processada. Se o mesmo
+  // registro recebeu uma versão mais nova, a versão nova continua pendente.
+  const latest = readQueue();
+  const pending = latest.flatMap(current => {
+    const result = resultados.get(current.id);
+    if (!result) return [current];
+    if (current.updatedAt > result.original.updatedAt) return [current];
+    return result.failed ? [result.failed] : [];
+  });
+
+  const maxAttempts = pending.reduce((max, job) => Math.max(max, job.attempts), 0);
+  const status = writeQueue(pending, { syncing: false, lastProcessedAt: Date.now(), nextRetryAt: undefined });
+  if (pending.length) agendarSincronizacao(calcularAtrasoRetry(maxAttempts));
+  return status;
+}
+
+export function processarFilaSync(): Promise<SyncQueueStatus> {
+  if (processamentoAtual) return processamentoAtual;
+  processamentoAtual = executarFilaSync().finally(() => {
+    processamentoAtual = null;
+    const queue = readQueue();
+    if (!queue.length) writeQueue([], { syncing: false, nextRetryAt: undefined });
+  });
+  return processamentoAtual;
+}
+
+/**
+ * Mantém a fila funcionando sem depender de clique: inicia ao entrar no app,
+ * ao enfileirar, ao reconectar, ao voltar para a aba e em verificações periódicas.
+ */
+export function iniciarSincronizacaoAutomatica() {
+  sincronizacaoAutomaticaAtiva = true;
+
+  const tentarAgora = () => {
+    if (!readQueue().length || processamentoAtual) return;
+    if (timerRetry !== undefined) {
+      window.clearTimeout(timerRetry);
+      timerRetry = undefined;
+    }
+    void processarFilaSync();
+  };
+  const aoVisibilizar = () => { if (document.visibilityState === 'visible') tentarAgora(); };
+  const aoAlterarStorage = (event: StorageEvent) => {
+    if (event.key === QUEUE_KEY) {
+      window.dispatchEvent(new CustomEvent(SYNC_EVENT, { detail: getSyncQueueStatus() }));
+      tentarAgora();
+    }
+  };
+
+  window.addEventListener('online', tentarAgora);
+  window.addEventListener('focus', tentarAgora);
+  window.addEventListener('storage', aoAlterarStorage);
+  document.addEventListener('visibilitychange', aoVisibilizar);
+  const heartbeat = window.setInterval(() => {
+    if (timerRetry === undefined) tentarAgora();
+  }, 30_000);
+
+  tentarAgora();
+
+  return () => {
+    sincronizacaoAutomaticaAtiva = false;
+    if (timerRetry !== undefined) window.clearTimeout(timerRetry);
+    timerRetry = undefined;
+    window.clearInterval(heartbeat);
+    window.removeEventListener('online', tentarAgora);
+    window.removeEventListener('focus', tentarAgora);
+    window.removeEventListener('storage', aoAlterarStorage);
+    document.removeEventListener('visibilitychange', aoVisibilizar);
+  };
 }

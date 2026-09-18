@@ -1,430 +1,468 @@
-# PDV Sistema
+# Órbita 2.0
 
-Sistema web de ponto de venda (PDV) para adega/loja, com controle de caixa, vendas, estoque, clientes, entregas, dashboard financeiro e integração com Supabase.
+Sistema web de gestão para adegas, lojas e pequenos comércios, reunindo PDV,
+caixa, estoque, compras inteligentes, clientes, entregas, rastreamento e
+relatórios em uma aplicação multiempresa.
 
-## Visão geral
+O projeto utiliza React, TypeScript, Vite, Zustand e Supabase. Pode ser instalado
+como PWA e mantém uma fila local para operações que não puderem ser sincronizadas
+imediatamente.
 
-O projeto foi desenvolvido com React, TypeScript, Vite e Zustand. Inicialmente os dados eram persistidos no `localStorage` do navegador. A aplicação agora também possui integração com Supabase para salvar as informações principais na nuvem, mantendo o `localStorage` como cache/fallback local.
+> **Estado do produto:** a versão atual está adequada para pilotos acompanhados.
+> Antes de receber clientes em produção, conclua o checklist de
+> [`docs/PRODUCAO.md`](docs/PRODUCAO.md), valide todas as migrations no projeto
+> Supabase de produção e finalize os dados jurídicos e de suporte.
 
-## Confiabilidade operacional
+## Novidades da versão 2.0
 
-- A confirmação de uma venda usa a função `confirmar_venda_atomica`: venda, itens, baixa de estoque, movimentação, caixa e auditoria são confirmados na mesma transação.
-- A fila offline guarda tentativas e a causa do último erro. O topo mostra `Sincronizado` ou a quantidade de alterações pendentes; clique nela para reenviar.
-- O identificador da venda é idempotente: reenviar uma venda pendente não duplica faturamento nem baixa estoque duas vezes.
-- Antes de publicar, execute também `supabase/migrations/20260915_confiabilidade_operacional.sql` no SQL Editor. Ela não apaga dados e cria a auditoria e a função transacional.
-- Use a tela **Backup** para exportar JSON completo ou planilhas CSV. O botão de limpar remove apenas o cache deste navegador, não registros do Supabase.
+- Nova identidade visual Órbita e PWA com manifesto e ícone próprios.
+- Modo escuro padronizado com o dashboard.
+- Sessão com opção **Lembrar-me**: persistência local quando marcada e sessão
+  temporária quando desmarcada.
+- Controle multiempresa por `loja_id` e permissões por papel.
+- Controle manual de assinatura por loja, com teste, carência, suspensão e
+  cancelamento.
+- Venda atômica e idempotente no Supabase, evitando confirmações parciais e
+  vendas duplicadas em reenvios.
+- Estoque mínimo e ponto de pedido calculados automaticamente.
+- Composição de estoque para itens derivados, como doses que consomem garrafas.
+- Central de compras refeita com orçamento reativo, prioridades, confiança da
+  previsão, mínimo de compra e múltiplo de embalagem.
+- Pedidos de compra com aprovação, trânsito, recebimento e cancelamento.
+- Inventário físico, perdas, quebras, lotes, validade e busca por código de barras.
+- Histórico de vendas preservando o nome dos itens vendidos.
+- Entregas com aceite, ocorrências, confirmação, devolução de estoque e
+  rastreamento do entregador.
+- Curva ABC, Matriz QPR e relatório gerencial com gráficos e ações recomendadas.
+- CRM básico com tags, observações, fiado e histórico do cliente.
+- Testes automatizados para compras, estoque composto, assinatura, permissões,
+  lucro e indicadores gerenciais.
+- Workflow de qualidade com lint, testes e build no GitHub Actions.
 
-Principais recursos:
+## Módulos do sistema
 
-- Login com Supabase Auth
-- Dashboard com indicadores de vendas, estoque e lucro líquido
-- PDV com carrinho, desconto, múltiplas formas de pagamento com valor final preenchido automaticamente e fiado
-- Controle de caixa com abertura e fechamento
-- Histórico de caixas fechados
-- Estoque mínimo e ponto de pedido calculados automaticamente
-- Composição de estoque para itens derivados, como doses consumindo garrafas
-- Movimentações de entrada e saída
-- Clientes com limite/saldo de fiado
-- Compras inteligentes com previsão de demanda, orçamento, fornecedor, aprovação e cancelamento de pedidos
-- Entregas com status e rastreamento
-- Backup local em JSON
-- Migração manual dos dados do navegador para o Supabase
+### Dashboard
 
-## Tecnologias
+- Indicadores de faturamento, vendas, ticket médio, lucro e estoque.
+- Produtos com maior giro e desempenho por período.
+- Alertas operacionais e atalhos para os principais módulos.
+- Gráficos responsivos para desktop e dispositivos móveis.
 
-- React
-- TypeScript
-- Vite
-- Zustand
-- Supabase
-- Tailwind CSS
-- Recharts
-- Lucide React
-- Motion React
+### PDV
+
+- Busca por nome, SKU ou código de barras.
+- Carrinho persistido durante a venda.
+- Alteração de quantidade e desconto.
+- Dinheiro, PIX, cartão de crédito, cartão de débito e fiado.
+- Múltiplas formas de pagamento.
+- Primeiro pagamento preenchido automaticamente com o valor final da venda.
+- Devolução e impressão de comprovante pelo navegador.
+- Atalhos `F2` para finalizar e `F4` para limpar o carrinho.
+- Venda bloqueada quando não existe caixa aberto.
+- Confirmação transacional no banco: venda, itens, estoque, movimentação,
+  caixa e auditoria são processados em conjunto.
+
+### Caixa
+
+- Abertura e fechamento de caixa.
+- Entradas por venda e quitação de fiado.
+- Suprimentos e sangrias.
+- Histórico de caixas fechados.
+- Faturamento bruto e lucro calculado por receita menos CMV.
+
+### Produtos e estoque
+
+- Cadastro de SKU, nome, categoria, código de barras, imagem e fornecedor
+  opcional.
+- Custo, preço de venda, impostos, frete, comissão e margem-alvo.
+- Lead time, qualidade, quantidade mínima de compra e múltiplo de embalagem.
+- Estoque mínimo e ponto de pedido automáticos; não são informados manualmente.
+- Entradas, saídas e contagem física.
+- Motivos de ajuste: compra, inventário, perda, quebra, validade, devolução e
+  outros.
+- Controle de lote, validade, observação, responsável e data de aprovação.
+- Pesquisa por produto, SKU e código de barras.
+
+### Composição de estoque
+
+Produtos derivados podem consumir o estoque de outro produto físico. Isso é
+útil para doses, porções, kits e fracionamentos.
+
+Exemplo:
+
+1. Cadastre **Garrafa Eternity Melancia** com estoque próprio.
+2. Cadastre **Dose Eternity Melancia**.
+3. Na edição da dose, pesquise a garrafa em **Composição de estoque**.
+4. Informe que uma garrafa rende, por exemplo, `10` doses.
+
+Cada dose vendida consome `1/10` da garrafa. A demanda das doses é convertida em
+demanda da garrafa, portanto o sistema de compras recomenda a garrafa física e
+não a dose.
+
+### Compras inteligentes
+
+A central de compras cruza:
+
+- Histórico de vendas e demanda diária.
+- Estoque disponível.
+- Pedidos em rascunho, aprovados ou em trânsito.
+- Lead time e variabilidade da demanda.
+- Estoque de segurança, ponto de pedido e estoque-alvo.
+- Risco de ruptura e dias de cobertura.
+- Custo, margem, importância e confiança da previsão.
+- Quantidade mínima e múltiplo de embalagem.
+- Composição entre produtos derivados e itens físicos.
+- Orçamento disponível.
+
+Os itens são separados em:
+
+- **Comprar agora:** risco relevante de ruptura.
+- **Planejar reposição:** deve entrar nas próximas compras.
+- **Monitorar:** sem necessidade imediata.
+- **Corrigir dados:** histórico ou cadastro insuficiente para uma decisão segura.
+
+Modos de uso:
+
+- **Somente analisar:** apresenta as recomendações sem criar pedidos.
+- **Controlado:** gera rascunhos para revisão e aprovação.
+- **Automático:** cria pedidos internos pendentes apenas para urgências com
+  confiança mínima; não envia pedidos a fornecedores externos.
+
+O orçamento recalcula imediatamente quantidades, valor planejado, saldo, estoque
+projetado e urgências que ficaram fora do plano. Remover um item redistribui o
+saldo entre os demais produtos. O fornecedor é opcional e pedidos sem fornecedor
+ficam identificados como **Fornecedor a definir**.
+
+Fluxo dos pedidos:
+
+```text
+Rascunho -> Aprovado -> Em trânsito -> Recebido
+                    \-> Cancelado
+```
+
+Rascunhos e pedidos abertos entram no cálculo para evitar sugestões duplicadas.
+Ao receber um pedido, o estoque dos produtos é atualizado e a política de
+reposição é recalculada.
+
+> O motor é uma ferramenta de apoio. Nas primeiras semanas de uso, mantenha o
+> modo Controlado e revise as recomendações. A confiança depende da qualidade e
+> da quantidade de dados registrados para cada produto.
+
+### Clientes e fiado
+
+- Nome, telefone, e-mail, tags e observações.
+- Limite de crédito, saldo em aberto e quantidade de compras.
+- Venda fiada vinculada ao cliente.
+- Quitação parcial ou total com registro no caixa.
+- Busca e segmentação básica por tags.
+- Identificação de clientes inativos nos indicadores gerenciais.
+
+### Entregas
+
+- Criação do pedido com cliente, telefone, endereço, itens, taxa e pagamento.
+- Reserva de estoque no momento da criação.
+- Estados `pendente`, `aceito`, `em_rota`, `entregue`, `nao_entregue` e
+  `cancelado`.
+- Atribuição de entregador.
+- Registro de motivo de cancelamento ou tentativa não concluída.
+- Nome de quem recebeu e código de confirmação.
+- Devolução automática da reserva ao estoque quando a entrega é cancelada.
+- Geração da venda e da entrada de caixa quando a entrega é concluída.
+- Indicadores de entregas concluídas, canceladas e tempo médio.
+
+### App do entregador e rastreamento
+
+- Interface restrita a contas com papel `entregador`.
+- Visualização das entregas disponíveis e das entregas assumidas pelo usuário.
+- Aceite, início da rota, conclusão e ocorrência de não entrega.
+- Captura da localização via navegador durante a rota.
+- Posição atual e histórico de pontos separados por `loja_id`.
+- Painel de rastreamento com atualizações do Supabase Realtime.
+
+### Relatórios e análises
+
+- Relatório gerencial de receita, CMV, taxas estimadas, sangrias/perdas,
+  resultado operacional, margem e contas a receber.
+- Desempenho dos entregadores, taxa de sucesso e tempo médio.
+- Exportação do resumo gerencial em CSV.
+- Histórico de vendas com fotografia textual dos itens vendidos.
+- Curva ABC com participação, acumulado, gráfico de Pareto e decisão sugerida.
+- Matriz QPR cruzando qualidade, margem e giro.
+- Quadrantes **Estrela**, **Potencial**, **Volume** e **Revisar**.
+- Alertas de estoque, margem e operação.
+- Backup local em JSON e exportações CSV.
+
+> O relatório gerencial não substitui uma DRE contábil ou fiscal.
+
+### Ponto eletrônico
+
+- Seleção de colaborador.
+- Registro de eventos de ponto e consulta dos registros da equipe.
+- Isolamento dos usuários da mesma loja pelas políticas de acesso.
+
+## Usuários e permissões
+
+O Supabase Auth identifica o usuário. A tabela `public.perfis` armazena nome,
+papel, status e `loja_id`.
+
+| Papel | Acesso principal |
+| --- | --- |
+| `owner` | Todos os módulos e gestão da equipe |
+| `gerente` | Operação, estoque, compras, relatórios e entregas |
+| `atendente` | PDV, pedidos de entrega, histórico e clientes |
+| `entregador` | App do entregador e rastreamento |
+
+O menu é filtrado no frontend e as operações também são limitadas por RLS no
+banco. O acesso aos dados é por loja, não pelo `user_id` de quem criou o registro.
+Assim, os colaboradores de uma mesma loja compartilham os dados permitidos sem
+enxergar outras lojas.
+
+## Assinatura manual por loja
+
+A assinatura comercial pertence à loja, e não a cada perfil. Todos os usuários
+com o mesmo `loja_id` utilizam o mesmo registro em `assinaturas_lojas`.
+
+Estados suportados:
+
+- `trial`: liberado até `periodo_teste_ate`.
+- `active`: liberado; `acesso_ate` vazio representa acesso sem vencimento.
+- `past_due`: liberado durante a carência definida em `carencia_ate`.
+- `suspended`: bloqueado manualmente.
+- `cancelled`: assinatura encerrada.
+
+O cliente pode consultar apenas a assinatura da própria loja e não pode alterá-la
+pela API. A alteração é feita pelo operador da plataforma no Supabase. Quando a
+assinatura perde a validade, a interface mostra a tela de bloqueio e uma política
+restritiva impede acesso às tabelas operacionais.
+
+Veja o procedimento completo em [`docs/ASSINATURAS.md`](docs/ASSINATURAS.md).
+
+## Persistência, sincronização e operação offline
+
+O Supabase é a base remota principal. A store Zustand mantém uma cópia local para
+estado da interface e continuidade operacional.
+
+Fluxo simplificado:
+
+```text
+Ação na interface
+      |
+      +--> atualiza Zustand/localStorage
+      |
+      +--> tenta gravar no Supabase
+                |
+                +--> sucesso: sincronizado
+                \--> falha: entra na fila local e tenta novamente ao reconectar
+```
+
+- O topo informa se existem alterações pendentes.
+- A fila registra a operação e o último erro.
+- O reenvio de uma venda usa o mesmo identificador para não duplicar a operação.
+- Ao entrar no sistema, produtos, movimentações, vendas, clientes, caixas,
+  entradas, entregas e compras são carregados da loja autenticada.
+
+> O cache local não substitui o backup do banco. Configure backup, restauração,
+> alertas e monitoramento no ambiente de produção.
+
+## Arquitetura e tecnologias
+
+- React 19 e React DOM.
+- TypeScript.
+- Vite.
+- Zustand com persistência local.
+- Supabase Auth, Postgres, Data API, RLS e Realtime.
+- Tailwind CSS e componentes Base UI/Radix.
+- Recharts para gráficos.
+- Leaflet/React Leaflet para mapas.
+- Lucide React para ícones.
+- Vite PWA para instalação e atualização do aplicativo.
+- Vitest, ESLint e GitHub Actions para qualidade.
 
 ## Estrutura principal
 
-```txt
+```text
 src/
-  App.tsx                  # Layout principal, menu, login e botão de migração
-  Login.tsx                # Tela de autenticação
+  App.tsx                       rotas, layout, RBAC e bloqueio de assinatura
+  Login.tsx                     autenticação e Lembrar-me
+  AppEntregador.tsx             operação do entregador
+  PainelMapa.tsx                rastreamento em tempo real
+  PontoEletronico.tsx           registros de ponto
+  components/
+    GerenciarCompras.tsx        ciclo dos pedidos de compra
+    PurchasingDashboard.tsx     KPIs da análise de compras
+    TutorialCompras.tsx         ajuda contextual de compras
   lib/
-    store.ts               # Store global Zustand + persistência local + sync Supabase
-    supabase.ts            # Cliente Supabase
-    sync.ts                # Conversão LS <-> Supabase e funções de sincronização
-    intelligence/          # Previsão de demanda, importância e política de reposição
-    dateBR.ts              # Datas em America/Sao_Paulo
-    lucro.ts               # Cálculo único de lucro líquido
-    toast.tsx              # Sistema de notificações
+    assinatura.ts               validade da assinatura da loja
+    analytics.ts                indicadores gerenciais
+    dateBR.ts                   datas em America/Sao_Paulo
+    lucro.ts                    CMV e lucro
+    rbac.ts                     permissões por papel
+    store.ts                    estado e regras operacionais
+    supabase.ts                 cliente e persistência da sessão
+    sync.ts                     leitura, escrita e fila offline
+    intelligence/
+      engine.ts                 política de estoque e previsão
+      forecast.ts               apoio à previsão de demanda
+      Importance.ts             fatores de importância
+      purchasePlanner.ts        plano e faixas de compra
+      purchaseBudget.ts         distribuição do orçamento
   pages/
-    Dashboard.tsx          # Dashboard financeiro/estoque
-    PDV.tsx                # Ponto de venda
-    Produtos.tsx           # Cadastro/listagem de produtos
-    Movimentacoes.tsx      # Entradas e saídas de estoque
-    Compras.tsx            # Compras e reposição
-    Clientes.tsx           # Clientes e fiado
-    EntregasPDV.tsx        # Entregas
-    Analises.tsx           # Caixa, histórico, ABC, backup e alertas
+    Dashboard.tsx
+    PDV.tsx
+    Produtos.tsx
+    Movimentacoes.tsx
+    Compras.tsx
+    Clientes.tsx
+    EntregasPDV.tsx
+    Relatorios.tsx
+    Analises.tsx
 supabase/
-  schema.sql               # Schema recomendado para recriar as tabelas no Supabase
-  migrations/              # Atualizações incrementais para instalações existentes
+  schema.sql                    bootstrap legado para banco totalmente vazio
+  migrations/                   evolução incremental do banco
+docs/
+  ASSINATURAS.md
+  PRODUCAO.md
 ```
 
-## Instalação
+## Configuração local
+
+### Requisitos
+
+- Node.js 22 ou compatível.
+- npm.
+- Projeto Supabase.
+
+### Instalação
 
 ```bash
 npm install
 ```
 
-## Variáveis de ambiente
-
-Crie um arquivo `.env.local` na raiz do projeto:
+Crie `.env.local` na raiz:
 
 ```env
 VITE_SUPABASE_URL=https://seu-projeto.supabase.co
-VITE_SUPABASE_ANON_KEY=sua-anon-key
+VITE_SUPABASE_ANON_KEY=sua-chave-publicavel-ou-anon
 ```
 
-O arquivo `src/lib/supabase.ts` lê essas variáveis:
+Nunca coloque `service_role`, secret key ou senha do banco em variáveis `VITE_*`.
+Tudo que começa com `VITE_` é enviado ao navegador.
 
-```ts
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-```
-
-## Executando em desenvolvimento
+Inicie o projeto:
 
 ```bash
 npm run dev
 ```
 
-A aplicação será servida pelo Vite. Normalmente o endereço local será exibido no terminal.
+## Banco de dados e migrations
 
-## Build e validação
+### Banco novo e vazio
+
+O arquivo `supabase/schema.sql` recria estruturas e contém comandos destrutivos.
+Ele só pode ser usado como bootstrap de um banco totalmente vazio e depois de
+revisão. Em seguida, aplique as migrations em ordem cronológica.
+
+### Banco existente
+
+**Nunca execute `supabase/schema.sql` em um projeto com dados.** Faça backup e
+aplique somente as migrations ainda pendentes.
+
+| Migration | Finalidade |
+| --- | --- |
+| `20260913_multitenant_sync.sql` | `loja_id`, compartilhamento por loja, compras, rastreio e composição |
+| `20260915_confiabilidade_operacional.sql` | auditoria e confirmação atômica da venda |
+| `20260915_reparar_itens_venda.sql` | recupera vínculos históricos de itens quando possível |
+| `20260915_restringir_entregador.sql` | limita o entregador aos recursos de entrega |
+| `20260915_tracking_realtime.sql` | pontos de GPS e políticas de rastreamento |
+| `20260916_producao_estoque_compras_crm.sql` | inventário, preços, CRM, helpers privados e policies de perfis |
+| `20260916212101_controle_manual_assinaturas.sql` | assinatura manual e bloqueio restritivo por loja |
+
+Após aplicar:
+
+1. Confirme que todas as tabelas públicas possuem RLS adequado.
+2. Revise os `GRANT` necessários para a Data API.
+3. Execute Security Advisor e Performance Advisor.
+4. Teste um usuário de cada papel em pelo menos duas lojas.
+5. Teste backup e restauração antes de cadastrar clientes pagantes.
+
+O Supabase passou a exigir exposição explícita de novas tabelas em projetos
+recentes. RLS e `GRANT` são camadas diferentes e ambas precisam estar corretas.
+
+## Cadastro de lojas e colaboradores
+
+Uma conta do Supabase Auth deve possuir uma linha correspondente em `perfis`.
+O `loja_id` determina a qual empresa ela pertence e `role` determina o que ela
+pode fazer.
+
+Para um colaborador de uma loja existente:
+
+1. Crie ou convide a conta no Supabase Auth.
+2. Confirme a criação do perfil.
+3. Use o mesmo `loja_id` da empresa.
+4. Defina `role` como `owner`, `gerente`, `atendente` ou `entregador`.
+
+Para uma nova loja, crie também exatamente uma linha em `assinaturas_lojas`. Não
+crie uma assinatura para cada funcionário.
+
+## Scripts e validação
 
 ```bash
-npm run build
+npm run dev              # ambiente de desenvolvimento
+npm run build            # typecheck e build de produção
+npm run preview          # visualiza o build localmente
+npm run lint             # análise estática
+npm test -- --run        # testes automatizados
+npx tsc -b --pretty false
 ```
 
-Para checagem TypeScript sem gerar build:
-
-```bash
-npx tsc -b
-```
-
-Para lint:
-
-```bash
-npm run lint
-```
-
-Observação: o projeto pode possuir erros de lint pré-existentes em arquivos de UI ou configuração. A checagem de tipos com `tsc` é a validação principal usada para garantir que a aplicação compila.
-
-## Supabase
-
-O projeto usa Supabase para:
-
-- Autenticação de usuários
-- Persistência de produtos
-- Persistência de vendas
-- Persistência de itens de venda
-- Clientes
-- Movimentações de estoque
-- Caixa
-- Entradas de caixa
-- Entregas
-
-### Schema
-
-O arquivo `supabase/schema.sql` contém o schema recomendado.
-
-Ele cria/recria:
-
-- `produtos`
-- `movimentacoes`
-- `clientes`
-- `vendas`
-- `itens_venda`
-- `caixas`
-- `caixa_entradas`
-- `entregas`
-
-Também ativa RLS. Para instalações com equipe/loja compartilhada, a migração abaixo substitui a política individual por acesso controlado via `loja_id` e perfil do usuário.
-
-Para aplicar:
-
-1. Abra o painel do Supabase.
-2. Vá em SQL Editor.
-3. Cole o conteúdo de `supabase/schema.sql`.
-4. Execute o script.
-
-Atenção: o script recria tabelas e remove estruturas antigas como `vw_curva_abc` e `alertas_compra`. Faça backup se houver dados importantes no Supabase antes de rodar.
-
-### Atualização para loja compartilhada, compras e composição de estoque
-
-Para uma instalação já existente, aplique também a migração:
-
-```txt
-supabase/migrations/20260913_multitenant_sync.sql
-```
-
-Ela adiciona `loja_id` às tabelas operacionais, cria `pedidos_compra` e `itens_pedido_compra`, permite RLS por loja e inclui os campos necessários para composição de estoque. Execute-a pelo SQL Editor ou Supabase CLI antes de publicar esta versão.
-
-## Migração do localStorage para Supabase
-
-Como o sistema originalmente salvava os dados no navegador, a migração é manual.
-
-Após rodar o schema no Supabase:
-
-1. Faça login no sistema.
-2. Clique em **Migrar p/ Supabase** no topo da aplicação.
-3. Confirme a migração.
-4. O sistema lê a chave `adega-pro-store` do `localStorage`.
-5. Os dados são enviados para o Supabase.
-
-Dados migrados:
-
-- Produtos
-- Movimentações
-- Vendas
-- Itens de venda
-- Clientes
-- Caixas
-- Entradas de caixa
-- Entregas
-
-Depois da migração, novas alterações passam a ser gravadas localmente e também sincronizadas com o Supabase.
-
-## Estratégia de persistência
-
-A aplicação usa uma estratégia híbrida:
-
-- `localStorage`: cache local/fallback offline
-- Supabase: base remota principal
-
-Fluxo atual:
-
-1. A store Zustand continua persistindo no `localStorage`.
-2. As ações principais disparam uma sincronização em background com Supabase.
-3. Ao carregar o app logado, ele tenta buscar dados do Supabase.
-4. Os produtos, movimentações, vendas, clientes, caixas, entradas, entregas e pedidos de compra hidratam a store local.
-5. Se o Supabase estiver offline, o app continua usando o `localStorage` e processa a fila de sincronização quando a conexão voltar.
-
-Arquivos envolvidos:
-
-- `src/lib/store.ts`
-- `src/lib/sync.ts`
-- `src/App.tsx`
-
-## Datas e virada do dia
-
-O sistema usa horário de Brasília para datas de negócio.
-
-O problema original era o uso de:
-
-```ts
-new Date().toISOString().split('T')[0]
-```
-
-Esse código usa UTC. Como Brasília normalmente está em UTC-3, o dia virava às 21h no Brasil.
-
-Agora o projeto usa `src/lib/dateBR.ts`, com `America/Sao_Paulo`, para garantir que o dia vire apenas às 00:00 no horário de Brasília.
-
-Funções principais:
-
-- `hojeBRT()`
-- `isoParaDataBRT()`
-- `cortarDataBRT()`
-- `horaBRT()`
-
-A função `hoje()` exportada por `store.ts` também usa `hojeBRT()`.
-
-## Lucro líquido
-
-O cálculo de lucro líquido foi unificado em `src/lib/lucro.ts`.
-
-Fórmula adotada:
-
-```txt
-Lucro líquido = Receita das vendas - CMV
-```
-
-Onde:
-
-```txt
-CMV = soma dos itens vendidos * preço de compra do produto
-```
-
-Essa fórmula é usada para alinhar:
-
-- Dashboard
-- Fechamento de caixa
-- Relatórios que precisarem do mesmo número
-
-Antes, o dashboard calculava lucro usando compras/entradas de estoque do período, enquanto o caixa usava custo dos itens vendidos. Isso gerava valores diferentes.
-
-## Caixa
-
-O caixa deve estar aberto para realizar vendas pelo PDV.
-
-Ao abrir caixa:
-
-- É criado um registro local em `caixaAberto`.
-- O caixa é sincronizado com Supabase.
-
-Ao fechar caixa:
-
-- O sistema calcula faturamento bruto.
-- Calcula lucro líquido usando a fórmula única de CMV.
-- Salva o caixa fechado no histórico.
-- Sincroniza o fechamento com Supabase.
-
-## PDV
-
-O PDV permite:
-
-- Buscar produtos
-- Adicionar itens ao carrinho
-- Alterar quantidade
-- Aplicar desconto fixo
-- Usar múltiplas formas de pagamento
-- Registrar fiado vinculado a cliente
-- Registrar devolução
-- Emitir cupom via impressão do navegador
-
-O primeiro pagamento acompanha automaticamente o total do pedido, inclusive após desconto. Ao editar o valor ou dividir o pagamento em mais de uma forma, o operador assume o controle do rateio.
-
-Atalhos:
-
-- `F2`: finalizar venda
-- `F4`: limpar carrinho
-
-O carrinho ainda é salvo em `localStorage` separado na chave `carrinho`, para evitar perda durante uma venda em andamento.
-
-## Produtos e estoque
-
-Cada produto possui informações como:
-
-- SKU
-- Nome
-- Código de barras
-- Categoria
-- Fornecedor
-- Lead time
-- Preço de compra
-- Preço de venda
-- Imposto
-- Frete
-- Comissão
-- Margem alvo
-- Estoque atual
-- Estoque mínimo
-- Ponto de pedido
-- Qualidade
-- Imagem
-
-Movimentações de estoque atualizam o saldo do produto e são sincronizadas com Supabase.
-
-### Estoque automático e composição
-
-O sistema recalcula estoque mínimo e ponto de pedido após vendas, entregas, movimentações e recebimentos de compra. O cálculo considera demanda, giro, variabilidade e lead time.
-
-Produtos derivados podem consumir o estoque de um produto físico. Exemplo para uma adega:
-
-1. Cadastre a garrafa como produto com estoque próprio.
-2. Crie ou edite a dose.
-3. Em **Composição de estoque**, vincule a dose à garrafa e informe o rendimento, por exemplo, `10` doses por garrafa.
-
-Cada dose vendida reduz `1/10` da garrafa. As vendas de doses também entram na demanda da garrafa; por isso, o motor recomenda comprar a garrafa, e não a dose.
-
-## Compras inteligentes
-
-A tela de Compras calcula reposição somente para produtos físicos. Ela apresenta estoque atual, unidades já em reposição, ponto de pedido, estoque alvo e quantidade necessária.
-
-O plano prioriza risco de ruptura, importância, confiança da previsão e margem, respeita o orçamento disponível e separa pedidos por fornecedor.
-
-Fluxo de pedidos:
-
-- **Recomendação:** mostra o plano, sem criar pedidos.
-- **Controlado:** cria pedidos em rascunho para aprovação.
-- **Autônomo:** cria pedidos internos pendentes somente para itens críticos e com confiança alta; não envia pedidos a fornecedores externos.
-- Pedidos em rascunho podem ser aprovados ou cancelados.
-- Pedidos aprovados contam como estoque em reposição, evitando compra duplicada.
-- Somente pedidos aprovados/em trânsito podem ser recebidos; o recebimento atualiza o estoque e o lead time histórico.
-
-## Clientes e fiado
-
-Clientes possuem:
-
-- Nome
-- Telefone
-- Limite
-- Saldo
-- Quantidade de compras
-- Última cobrança
-
-Vendas fiado aumentam o saldo do cliente. Quitações reduzem o saldo e registram entrada no caixa.
-
-## Entregas
-
-As entregas possuem status:
-
-- `pendente`
-- `aceito`
-- `em_rota`
-- `entregue`
-- `cancelado`
-- `nao_entregue`
-
-O estoque é reservado na criação do pedido. Ao cancelar uma entrega, o sistema devolve a reserva ao estoque e cria a movimentação de retorno. Ao marcar como entregue, o sistema gera a venda e a entrada de caixa conforme a forma de pagamento.
-
-O entregador logado aceita seus próprios pedidos, inicia a rota com GPS e informa quem recebeu a compra. A tela de rastreamento consulta apenas as posições da mesma `loja_id`; aplique a migração do diretório `supabase/migrations` no SQL Editor antes de utilizar o GPS.
-
-## Backup local
-
-Na página de Backup, é possível baixar um JSON com dados locais.
-
-Esse backup é útil antes de:
-
-- Rodar scripts no Supabase
-- Fazer migração
-- Testar mudanças grandes
-- Limpar dados locais
-
-## Cuidados importantes
-
-- Rode `supabase/schema.sql` antes de clicar em **Migrar p/ Supabase**.
-- Faça backup antes de recriar tabelas no Supabase.
-- Não comite `.env.local` com chaves reais.
-- O botão de migração usa os dados do navegador atual; se houver dados em outro navegador/computador, migre a partir dele também.
-- Se o Supabase estiver offline, o sistema tenta continuar pelo `localStorage`.
-
-## Comandos úteis
-
-```bash
-npm install
-npm run dev
-npm run build
-npm run lint
-npx tsc -b --noEmit
-```
-
-## Estado atual da integração
-
-Implementado:
-
-- Cliente Supabase via `.env.local`
-- Schema SQL recomendado
-- Migração manual LS → Supabase
-- Escrita em Supabase em background nas ações principais
-- Leitura inicial do Supabase com fallback para `localStorage`
-- Data em horário de Brasília
-- Lucro líquido unificado por CMV
-
-Pontos que podem ser melhorados futuramente:
-
-- Tela de status de sincronização
-- Controle de conflitos entre dispositivos
-- Auditoria de operações financeiras
-- Relatórios avançados diretamente por queries SQL/views
-- Integrações autorizadas com catálogos e pedidos de fornecedores externos
+A suíte atual possui testes para:
+
+- Cálculo de lucro.
+- Permissões por papel.
+- Estoque composto de doses e garrafas.
+- Indicadores gerenciais.
+- Validade da assinatura.
+- Planejamento de compras.
+- Alocação e redistribuição do orçamento.
+
+O workflow `.github/workflows/quality.yml` executa instalação limpa, lint,
+testes e build em pushes para `main` e pull requests.
+
+## Publicação
+
+Antes de publicar:
+
+- Use projetos Supabase separados para desenvolvimento/homologação e produção.
+- Aplique migrations primeiro em homologação.
+- Configure domínio HTTPS e URLs permitidas no Supabase Auth.
+- Configure SMTP próprio para convites e recuperação de conta.
+- Habilite backups compatíveis com o risco da operação.
+- Configure monitoramento de erros e disponibilidade.
+- Preencha razão social, contato, suporte e encarregado nos Termos e na Política
+  de Privacidade.
+- Execute os testes de aceite descritos em [`docs/PRODUCAO.md`](docs/PRODUCAO.md).
+- Publique somente o artefato gerado por `npm run build`.
+
+Consulte também o
+[checklist oficial de produção do Supabase](https://supabase.com/docs/guides/deployment/going-into-prod).
+
+## Limitações conhecidas
+
+- O controle de assinatura ainda é manual e não possui gateway de pagamento.
+- O modo automático de compras cria pedidos internos; não envia ordens ao
+  fornecedor.
+- A recomendação de compras depende de estoque inicial, custos, lead time e
+  vendas registrados corretamente.
+- O backup em JSON é uma exportação do aplicativo e não substitui backup e
+  recuperação do banco.
+- O relatório gerencial não é escrituração contábil nem fiscal.
+- Ainda é necessário executar testes ponta a ponta de concorrência, restauração,
+  operação offline prolongada e isolamento entre lojas no ambiente final.
+- Termos de Serviço e Política de Privacidade precisam receber os dados reais da
+  empresa antes da comercialização.
+
+## Documentação complementar
+
+- [`docs/ASSINATURAS.md`](docs/ASSINATURAS.md): operação manual das assinaturas.
+- [`docs/PRODUCAO.md`](docs/PRODUCAO.md): checklist técnico antes de clientes
+  pagantes.

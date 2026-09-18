@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { useStore } from './lib/store';
-import { carregarTudo, getSyncQueueStatus, processarFilaSync, subscribeSyncQueueStatus, type SyncQueueStatus } from './lib/sync';
+import { carregarTudo, getSyncQueueStatus, iniciarSincronizacaoAutomatica, subscribeSyncQueueStatus, type SyncQueueStatus } from './lib/sync';
 import { assinaturaEstaLiberada, dataDaAssinatura, type AssinaturaLoja } from './lib/assinatura';
 import { ToastProvider } from './lib/toast';
 import { Login } from './Login';
@@ -239,7 +239,18 @@ function Topbar({
   const [syncStatus, setSyncStatus] = useState<SyncQueueStatus>(() => getSyncQueueStatus());
 
   useEffect(() => subscribeSyncQueueStatus(setSyncStatus), []);
-  const sincronizarAgora = () => { void processarFilaSync().then(setSyncStatus); };
+  const syncLabel = syncStatus.syncing
+    ? `Sincronizando ${syncStatus.pending}`
+    : syncStatus.failed
+      ? `${syncStatus.pending} com erro`
+      : syncStatus.pending
+        ? `${syncStatus.pending} aguardando`
+        : 'Sincronizado';
+  const syncTitle = syncStatus.lastError
+    ? `A sincronização é automática. Último erro: ${syncStatus.lastError}`
+    : syncStatus.pending
+      ? 'Alterações aguardando sincronização automática'
+      : 'Todos os dados foram sincronizados';
   return (
     <header className={`
       flex items-center justify-between h-16 px-4 border-b flex-shrink-0
@@ -259,13 +270,14 @@ function Topbar({
         )}
       </div>
       <div className="flex items-center gap-2">
-        <button
-          onClick={sincronizarAgora}
-          title={syncStatus.pending ? `${syncStatus.pending} alteração(ões) aguardando sincronização` : 'Dados sincronizados'}
-          className={`hidden sm:inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${syncStatus.pending ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'}`}
+        <span
+          title={syncTitle}
+          aria-live="polite"
+          className={`hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${syncStatus.failed ? 'bg-red-500/15 text-red-700 dark:text-red-300' : syncStatus.pending ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'}`}
         >
-          {syncStatus.pending ? `${syncStatus.pending} pendente${syncStatus.pending > 1 ? 's' : ''}` : 'Sincronizado'}
-        </button>
+          {syncStatus.syncing && <Loader2 size={12} className="animate-spin" />}
+          {syncLabel}
+        </span>
         <span className={`text-xs hidden md:block ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
           {new Date().toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' })}
         </span>
@@ -432,10 +444,7 @@ function AppContent() {
 
   useEffect(() => {
     if (!acesso?.liberado) return;
-    const syncOfflineQueue = () => { void processarFilaSync(); };
-    window.addEventListener('online', syncOfflineQueue);
-    syncOfflineQueue();
-    return () => window.removeEventListener('online', syncOfflineQueue);
+    return iniciarSincronizacaoAutomatica();
   }, [acesso?.liberado]);
 
   if (verificandoSessao) {
