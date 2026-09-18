@@ -222,6 +222,26 @@ export async function atualizarLocalizacaoEntregador(localizacao: { entregadorId
 }
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/**
+ * Pedidos antigos usavam ids como `ped_xxx`. Converte-os de forma estável
+ * para UUID: repetir o mesmo trabalho offline produz exatamente o mesmo id.
+ */
+export async function normalizarIdPedidoCompra(id: string) {
+  const original = id.trim();
+  if (!original) throw new Error('Pedido de compra sem identificador.');
+  if (UUID_PATTERN.test(original)) return original;
+
+  const digest = new Uint8Array(await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`orbita:pedido-compra:${original}`),
+  ));
+  const bytes = digest.slice(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 /** Converte pedidos antigos, que usavam o nome como fornecedor_id, sem perder o nome. */
 export function normalizarFornecedorPedido(p: Pick<PedidoCompra, 'fornecedorId' | 'fornecedorNome'>) {
   const idInformado = p.fornecedorId?.trim();
@@ -235,9 +255,10 @@ export function normalizarFornecedorPedido(p: Pick<PedidoCompra, 'fornecedorId' 
 
 export async function upsertPedidoCompra(p: PedidoCompra, lojaId: string) {
   const user_id = await userOrThrow();
+  const pedidoId = await normalizarIdPedidoCompra(p.id);
   const fornecedor = normalizarFornecedorPedido(p);
   const dadosBase = {
-    id: p.id,
+    id: pedidoId,
     user_id,
     loja_id: lojaId,
     fornecedor_id: fornecedor.fornecedorId,
@@ -253,7 +274,7 @@ export async function upsertPedidoCompra(p: PedidoCompra, lojaId: string) {
   }
   check(error);
   if (!p.itens.length) return;
-  const { error: itemError } = await supabase.from('itens_pedido_compra').upsert(p.itens.map(i => ({ user_id, loja_id: lojaId, pedido_id: p.id, produto_id: i.produtoId, quantidade_solicitada: i.quantidade, preco_unit_custo: i.precoCusto })), { onConflict: 'pedido_id,produto_id' });
+  const { error: itemError } = await supabase.from('itens_pedido_compra').upsert(p.itens.map(i => ({ user_id, loja_id: lojaId, pedido_id: pedidoId, produto_id: i.produtoId, quantidade_solicitada: i.quantidade, preco_unit_custo: i.precoCusto })), { onConflict: 'pedido_id,produto_id' });
   check(itemError);
 }
 

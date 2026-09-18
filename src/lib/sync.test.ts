@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calcularAtrasoRetry, chaveDedupeSync, normalizarFornecedorPedido } from './sync';
+import { calcularAtrasoRetry, chaveDedupeSync, normalizarFornecedorPedido, normalizarIdPedidoCompra } from './sync';
 
 describe('fila automática de sincronização', () => {
   it('deduplica atualizações do mesmo registro e da mesma loja', () => {
@@ -29,5 +29,13 @@ describe('fila automática de sincronização', () => {
       fornecedorId: null,
       fornecedorNome: 'Distribuidora antiga',
     });
+  });
+
+  it('converte id legado de pedido em UUID estável', async () => {
+    const primeiro = await normalizarIdPedidoCompra('ped_67i7cq33q');
+    const segundo = await normalizarIdPedidoCompra('ped_67i7cq33q');
+
+    expect(primeiro).toBe(segundo);
+    expect(primeiro).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 });
