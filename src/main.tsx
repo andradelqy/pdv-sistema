@@ -6,6 +6,14 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import App from './App.tsx'
 import './index.css'
 
+// Uma PWA já instalada pode continuar servindo o bundle de produção mesmo
+// com o Vite aberto. Em desenvolvimento removemos apenas o Service Worker;
+// localStorage, sessão e fila offline permanecem intactos.
+if (import.meta.env.DEV && 'serviceWorker' in navigator) {
+  void navigator.serviceWorker.getRegistrations()
+    .then(registrations => Promise.all(registrations.map(registration => registration.unregister())))
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
