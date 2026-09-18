@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calcularAtrasoRetry, chaveDedupeSync } from './sync';
+import { calcularAtrasoRetry, chaveDedupeSync, normalizarFornecedorPedido } from './sync';
 
 describe('fila automática de sincronização', () => {
   it('deduplica atualizações do mesmo registro e da mesma loja', () => {
@@ -18,5 +18,16 @@ describe('fila automática de sincronização', () => {
     expect(calcularAtrasoRetry(0)).toBe(2_000);
     expect(calcularAtrasoRetry(2)).toBe(8_000);
     expect(calcularAtrasoRetry(10)).toBe(60_000);
+  });
+
+  it('não envia placeholder de fornecedor para uma coluna UUID', () => {
+    expect(normalizarFornecedorPedido({ fornecedorId: 'Fornecedor a definir' })).toEqual({
+      fornecedorId: null,
+      fornecedorNome: null,
+    });
+    expect(normalizarFornecedorPedido({ fornecedorId: 'Distribuidora antiga' })).toEqual({
+      fornecedorId: null,
+      fornecedorNome: 'Distribuidora antiga',
+    });
   });
 });

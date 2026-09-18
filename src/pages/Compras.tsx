@@ -52,8 +52,8 @@ export function Compras() {
       ;(grupos[fornecedor] ??= []).push(item)
       return grupos
     }, {})
-    Object.entries(porFornecedor).forEach(([fornecedorId, itens]) => addPedidoCompra({
-      id: crypto.randomUUID(), fornecedorId, status: modo === 'autonomous' ? 'pending' : 'draft',
+    Object.entries(porFornecedor).forEach(([fornecedorNome, itens]) => addPedidoCompra({
+      id: crypto.randomUUID(), fornecedorNome: fornecedorNome === 'Fornecedor a definir' ? undefined : fornecedorNome, status: modo === 'autonomous' ? 'pending' : 'draft',
       itens: itens.map(item => ({ produtoId: item.produto.id, quantidade: item.quantidade, precoCusto: item.produto.precoCompra })),
       dataPedido: new Date().toISOString(), lojaId,
     }))

@@ -30,7 +30,7 @@ export function GerenciarCompras() {
             return (
               <div key={p.id} className="p-4 border rounded-lg flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <p className="font-bold">Pedido #{p.id.slice(-4)} · {p.fornecedorId}</p>
+                  <p className="font-bold">Pedido #{p.id.slice(-4)} · {p.fornecedorNome || p.fornecedorId || 'Fornecedor a definir'}</p>
                   <p className="text-sm text-muted-foreground">{statusLabel[p.status]} · {p.itens.length} item(ns) · {fmtR(total)}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">

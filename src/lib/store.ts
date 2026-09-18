@@ -153,7 +153,8 @@ export type PedidoEntrega = {
 
 export type PedidoCompra = {
   id: string
-  fornecedorId: string
+  fornecedorId?: string
+  fornecedorNome?: string
   status: 'draft' | 'pending' | 'in_transit' | 'received' | 'cancelled'
   itens: { produtoId: string, quantidade: number, precoCusto: number }[]
   dataPedido: string

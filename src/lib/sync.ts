@@ -190,7 +190,7 @@ export async function carregarTudo(lojaId: string): Promise<CargaRemota> {
     caixas: cx.map(r => ({ id: String(r.id), abertoEm: String(r.aberto_em), fechadoEm: r.fechado_em as string | undefined, faturamentoBruto: r.faturamento_bruto == null ? undefined : Number(r.faturamento_bruto), lucroLiquido: r.lucro_liquido == null ? undefined : Number(r.lucro_liquido), vendas: r.vendas == null ? undefined : Number(r.vendas) })),
     caixaEntradas: ce.map(r => ({ tipo: r.tipo as EntradaCaixa['tipo'], pagamento: r.pagamento as string | undefined, valor: Number(r.valor), data: String(r.data), descricao: r.descricao as string | undefined, caixaId: r.caixa_id as string | undefined })),
     entregas: en.map(r => ({ id: String(r.id), clienteNome: String(r.cliente_nome), telefone: r.telefone as string | undefined, endereco: String(r.endereco), itens: (r.itens ?? []) as ItemVenda[], total: Number(r.total), taxaEntrega: Number(r.taxa_entrega), pagamento: String(r.pagamento), status: r.status as PedidoEntrega['status'], entregadorId: r.entregador_id as string | undefined, entregadorNome: r.entregador_nome as string | undefined, data: String(r.data), criadoEm: String(r.criado_em), obs: r.obs as string | undefined, lat: r.lat == null ? undefined : Number(r.lat), lng: r.lng == null ? undefined : Number(r.lng), aceitoEm: r.aceito_em as string | undefined, emRotaEm: r.em_rota_em as string | undefined, entregueEm: r.entregue_em as string | undefined, canceladoEm: r.cancelado_em as string | undefined, canceladoMotivo: r.cancelado_motivo as string | undefined, naoEntregueEm: r.nao_entregue_em as string | undefined, naoEntregueMotivo: r.nao_entregue_motivo as string | undefined, recebedorNome: r.recebedor_nome as string | undefined, codigoConfirmacao: r.codigo_confirmacao as string | undefined })),
-    pedidosCompra: pc.map(r => ({ id: String(r.id), fornecedorId: String(r.fornecedor_id), status: r.status as PedidoCompra['status'], itens: itensPedido.get(String(r.id)) ?? [], dataPedido: String(r.data_pedido), lojaId, recebidoEm: r.recebido_em as string | undefined })),
+    pedidosCompra: pc.map(r => ({ id: String(r.id), fornecedorId: r.fornecedor_id == null ? undefined : String(r.fornecedor_id), fornecedorNome: r.fornecedor_nome as string | undefined, status: r.status as PedidoCompra['status'], itens: itensPedido.get(String(r.id)) ?? [], dataPedido: String(r.data_pedido), lojaId, recebidoEm: r.recebido_em as string | undefined })),
   };
 }
 
@@ -220,7 +220,42 @@ export async function atualizarLocalizacaoEntregador(localizacao: { entregadorId
   ]);
   check(atualError); check(pontoError);
 }
-export async function upsertPedidoCompra(p: PedidoCompra, lojaId: string) { const user_id = await userOrThrow(); const { error } = await supabase.from('pedidos_compra').upsert({ id: p.id, user_id, loja_id: lojaId, fornecedor_id: p.fornecedorId, status: p.status, data_pedido: p.dataPedido, recebido_em: p.recebidoEm }); check(error); if (!p.itens.length) return; const { error: itemError } = await supabase.from('itens_pedido_compra').upsert(p.itens.map(i => ({ user_id, loja_id: lojaId, pedido_id: p.id, produto_id: i.produtoId, quantidade_solicitada: i.quantidade, preco_unit_custo: i.precoCusto })), { onConflict: 'pedido_id,produto_id' }); check(itemError); }
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Converte pedidos antigos, que usavam o nome como fornecedor_id, sem perder o nome. */
+export function normalizarFornecedorPedido(p: Pick<PedidoCompra, 'fornecedorId' | 'fornecedorNome'>) {
+  const idInformado = p.fornecedorId?.trim();
+  const nomeInformado = p.fornecedorNome?.trim();
+  const fornecedorId = idInformado && UUID_PATTERN.test(idInformado) ? idInformado : null;
+  const nomeLegado = idInformado && !UUID_PATTERN.test(idInformado) && idInformado.toLowerCase() !== 'fornecedor a definir'
+    ? idInformado
+    : null;
+  return { fornecedorId, fornecedorNome: nomeInformado || nomeLegado || null };
+}
+
+export async function upsertPedidoCompra(p: PedidoCompra, lojaId: string) {
+  const user_id = await userOrThrow();
+  const fornecedor = normalizarFornecedorPedido(p);
+  const dadosBase = {
+    id: p.id,
+    user_id,
+    loja_id: lojaId,
+    fornecedor_id: fornecedor.fornecedorId,
+    status: p.status,
+    data_pedido: p.dataPedido,
+    recebido_em: p.recebidoEm,
+  };
+  let { error } = await supabase.from('pedidos_compra').upsert({ ...dadosBase, fornecedor_nome: fornecedor.fornecedorNome });
+  // Compatibilidade durante a implantação: se a coluna nova ainda não chegou
+  // ao projeto remoto, o pedido já pode sincronizar sem enviar o placeholder.
+  if (error && (error.code === 'PGRST204' || error.code === '42703' || error.message.includes('fornecedor_nome'))) {
+    ({ error } = await supabase.from('pedidos_compra').upsert(dadosBase));
+  }
+  check(error);
+  if (!p.itens.length) return;
+  const { error: itemError } = await supabase.from('itens_pedido_compra').upsert(p.itens.map(i => ({ user_id, loja_id: lojaId, pedido_id: p.id, produto_id: i.produtoId, quantidade_solicitada: i.quantidade, preco_unit_custo: i.precoCusto })), { onConflict: 'pedido_id,produto_id' });
+  check(itemError);
+}
 
 type SyncOperation = (...args: never[]) => Promise<void>;
 const operations: Record<string, SyncOperation> = { upsertProduto, deleteProduto, insertMovimentacao, deleteMovimentacao, upsertCliente, deleteCliente, upsertCaixa, insertCaixaEntrada, insertVenda, confirmarVendaAtomica, upsertEntrega, upsertPedidoCompra };
