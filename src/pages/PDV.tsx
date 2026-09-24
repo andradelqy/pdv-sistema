@@ -3,7 +3,17 @@
 // ======================================================================
 
 import { useState, useRef, useEffect, useMemo, useCallback, memo } from 'react'
-import { useStore, fmtR, hoje, type Produto, type ItemVenda } from '../lib/store'
+import {
+  useStore,
+  fmtR,
+  hoje,
+  estoqueDisponivelProduto,
+  consumoEstoque,
+  quantidadeMaximaDisponivel,
+  type Cliente,
+  type Produto,
+  type ItemVenda,
+} from '../lib/store'
 import { toast } from '../lib/toast'
 import {
   Search, Trash2, Printer, CheckCircle, Plus, Minus,
@@ -39,41 +49,45 @@ interface Desconto {
   valor: number
 }
 
-function estoqueDisponivel(produto: Produto, produtos: Produto[]): number {
-  if (!produto.produtoEstoqueOrigemId) return produto.estoque
-  const origem = produtos.find(item => item.id === produto.produtoEstoqueOrigemId)
-  return (origem?.estoque || 0) * Math.max(1, produto.unidadesPorEstoqueOrigem || 1)
-}
-
-function consumoPorProduto(itens: ItemVenda[], produtos: Produto[]): Map<string, number> {
-  return itens.reduce((consumo, item) => {
-    const produto = produtos.find(p => p.id === item.produtoId)
-    const produtoId = produto?.produtoEstoqueOrigemId || item.produtoId
-    const divisor = Math.max(1, produto?.unidadesPorEstoqueOrigem || 1)
-    consumo.set(produtoId, (consumo.get(produtoId) || 0) + item.quantidade / divisor)
-    return consumo
-  }, new Map<string, number>())
-}
-
 // ---------- Hooks personalizados ----------
+
+function chaveCarrinho(lojaId: string, userId?: string) {
+  return `orbita:carrinho:${encodeURIComponent(lojaId)}:${encodeURIComponent(userId || 'sem-usuario')}`
+}
+
+function carregarCarrinhoLocal(key: string): ItemCarrinho[] {
+  try {
+    const scoped = localStorage.getItem(key)
+    const legacy = scoped === null ? localStorage.getItem('carrinho') : null
+    const parsed = JSON.parse(scoped ?? legacy ?? '[]') as ItemCarrinho[]
+    if (legacy !== null) {
+      localStorage.setItem(key, JSON.stringify(parsed))
+      localStorage.removeItem('carrinho')
+    }
+    return Array.isArray(parsed)
+      ? parsed.filter(item => typeof item?.produtoId === 'string' && Number(item.quantidade) > 0)
+      : []
+  } catch {
+    return []
+  }
+}
 
 // 1. useCart – gerencia carrinho, total, persistência localStorage
 function useCart() {
-  const { produtos } = useStore()
-  const [carrinho, setCarrinho] = useState<ItemCarrinho[]>(() => {
-    const saved = localStorage.getItem('carrinho')
-    return saved ? JSON.parse(saved) : []
-  })
+  const { produtos, lojaId, currentUser } = useStore()
+  const storageKey = useMemo(() => chaveCarrinho(lojaId, currentUser?.id), [lojaId, currentUser?.id])
+  const [carrinho, setCarrinho] = useState<ItemCarrinho[]>(() => carregarCarrinhoLocal(storageKey))
 
   // Salvar no localStorage a cada alteração
   useEffect(() => {
-    localStorage.setItem('carrinho', JSON.stringify(carrinho))
-  }, [carrinho])
+    localStorage.setItem(storageKey, JSON.stringify(carrinho))
+  }, [carrinho, storageKey])
 
   const addItem = useCallback((produtoId: string) => {
     const p = produtos.find(x => x.id === produtoId)
     const jaNoCarrinho = carrinho.find(item => item.produtoId === produtoId)?.quantidade || 0
-    if (!p || estoqueDisponivel(p, produtos) <= jaNoCarrinho) {
+    const maximo = quantidadeMaximaDisponivel(produtoId, carrinho, produtos)
+    if (!p || maximo <= jaNoCarrinho) {
       toast('Sem estoque', 'warning')
       return false
     }
@@ -95,10 +109,10 @@ function useCart() {
       return
     }
     const produto = produtos.find(p => p.id === produtoId)
-    const quantidade = produto ? Math.min(val, estoqueDisponivel(produto, produtos)) : val
+    const quantidade = produto ? Math.min(val, quantidadeMaximaDisponivel(produtoId, carrinho, produtos)) : val
     if (quantidade < val) toast('Quantidade limitada ao estoque disponível', 'warning')
     setCarrinho(c => c.map(i => (i.produtoId === produtoId ? { ...i, quantidade } : i)))
-  }, [produtos])
+  }, [produtos, carrinho])
 
   const removeItem = useCallback((produtoId: string) => {
     setCarrinho(c => c.filter(i => i.produtoId !== produtoId))
@@ -174,11 +188,13 @@ function usePayment(total: number) {
     setPagamentos(prev => prev.filter(p => p.id !== id))
   }, [pagamentos.length])
 
-  const atualizarPagamento = useCallback((id: string, campo: 'forma' | 'valor', valor: any) => {
+  const atualizarPagamento = useCallback((id: string, campo: 'forma' | 'valor', valor: string | number) => {
     setPagamentos(prev =>
-      prev.map(p =>
-        p.id === id ? { ...p, [campo]: campo === 'valor' ? parseFloat(valor) || 0 : valor, automatico: campo === 'valor' ? false : p.automatico } : p
-      )
+      prev.map(p => {
+        if (p.id !== id) return p
+        if (campo === 'valor') return { ...p, valor: Number.parseFloat(String(valor)) || 0, automatico: false }
+        return { ...p, forma: valor as FormaPagamento }
+      })
     )
   }, [])
 
@@ -270,7 +286,7 @@ const CartItem = memo(({
   removeItem,
 }: {
   item: ItemCarrinho
-  produto: any
+  produto: Produto
   updateQty: (id: string, qty: number) => void
   removeItem: (id: string) => void
 }) => {
@@ -311,7 +327,7 @@ const ProductList = memo(({
   setBusca,
   loaderRef,
 }: {
-  produtos: any[]
+  produtos: Produto[]
   onAddItem: (id: string) => void
   busca: string
   setBusca: (s: string) => void
@@ -344,7 +360,7 @@ const ProductList = memo(({
       </div>
       <div className="overflow-y-auto max-h-80 flex flex-col gap-1">
         {produtos.map(p => {
-          const estoqueDerivado = estoqueDisponivel(p, produtos)
+          const estoqueDerivado = estoqueDisponivelProduto(p, produtos)
           const critico = !p.produtoEstoqueOrigemId && p.estoque <= p.estoqueMin
           const alerta = !p.produtoEstoqueOrigemId && p.estoque <= p.pontoPedido && p.estoque > p.estoqueMin
           return (
@@ -398,10 +414,10 @@ const PaymentSection = memo(({
   pagamentos: PagamentoParcial[]
   adicionarPagamento: () => void
   removerPagamento: (id: string) => void
-  atualizarPagamento: (id: string, campo: 'forma' | 'valor', valor: any) => void
+  atualizarPagamento: (id: string, campo: 'forma' | 'valor', valor: string | number) => void
   clienteId: string
   setClienteId: (id: string) => void
-  clientes: any[]
+  clientes: Cliente[]
   totalComDesconto: number
   somaPagamentos: number
   troco: number
@@ -524,68 +540,6 @@ const PaymentSection = memo(({
 })
 PaymentSection.displayName = 'PaymentSection'
 
-// Componente do cupom para impressão
-const Cupom = memo(({ venda, cliente, troco }: { venda: any; cliente?: any; troco?: number }) => {
-  return (
-    <div
-      style={{
-        fontFamily: 'monospace',
-        width: '80mm',
-        padding: '8px',
-        margin: '0 auto',
-        background: 'white',
-        color: 'black',
-      }}
-    >
-      <h3 style={{ textAlign: 'center', margin: '4px 0' }}>Minha Loja</h3>
-      <p style={{ textAlign: 'center', fontSize: '10px', margin: '2px 0' }}>
-        {new Date(venda.data).toLocaleString()}
-      </p>
-      <hr style={{ borderTop: '1px dashed #aaa' }} />
-      {venda.itens.map((i: any, idx: number) => (
-        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-          <span>{i.nome} x{i.quantidade}</span>
-          <span>{fmtR(i.precoUnit * i.quantidade)}</span>
-        </div>
-      ))}
-      <hr style={{ borderTop: '1px dashed #aaa' }} />
-      {venda.desconto && venda.desconto > 0 && (
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-          <span>Desconto</span>
-          <span>- {fmtR(venda.desconto)}</span>
-        </div>
-      )}
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 'bold' }}>
-        <span>TOTAL</span>
-        <span>{fmtR(venda.total)}</span>
-      </div>
-      <hr style={{ borderTop: '1px dashed #aaa' }} />
-      <div style={{ fontSize: '12px' }}>
-        <p>Pagamentos:</p>
-        {venda.pagamentos.map((p: any, idx: number) => (
-          <div key={idx} style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span>{p.forma}</span>
-            <span>{fmtR(p.valor)}</span>
-          </div>
-        ))}
-        {troco && troco > 0 && (
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span>Troco</span>
-            <span>{fmtR(troco)}</span>
-          </div>
-        )}
-      </div>
-      {cliente && (
-        <p style={{ fontSize: '12px' }}>Cliente: {cliente.nome}</p>
-      )}
-      {venda.obs && <p style={{ fontSize: '10px' }}>Obs: {venda.obs}</p>}
-      <hr style={{ borderTop: '1px dashed #aaa' }} />
-      <p style={{ textAlign: 'center', fontSize: '10px' }}>Obrigado pela preferência!</p>
-    </div>
-  )
-})
-Cupom.displayName = 'Cupom'
-
 // Modal de devolução
 const DevolucaoModal = memo(({
   isOpen,
@@ -594,7 +548,7 @@ const DevolucaoModal = memo(({
 }: {
   isOpen: boolean
   onClose: () => void
-  onDevolver: (vendaId: string, itens: any[]) => void
+  onDevolver: (vendaId: string, itens: ItemVenda[]) => void
 }) => {
   const { vendas, produtos } = useStore()
   const [selectedVendaId, setSelectedVendaId] = useState('')
@@ -610,7 +564,7 @@ const DevolucaoModal = memo(({
   useEffect(() => {
     if (vendaSelecionada) {
       const initial: Record<string, number> = {}
-      vendaSelecionada.itens.forEach((i: any) => {
+      vendaSelecionada.itens.forEach(i => {
         initial[i.produtoId] = i.quantidade
       })
       setItensSelecionados(initial)
@@ -626,7 +580,7 @@ const DevolucaoModal = memo(({
       .map(([produtoId, quantidade]) => ({
         produtoId,
         quantidade,
-        precoUnit: vendaSelecionada.itens.find((i: any) => i.produtoId === produtoId)?.precoUnit || 0,
+        precoUnit: vendaSelecionada.itens.find(i => i.produtoId === produtoId)?.precoUnit || 0,
       }))
     if (itens.length === 0) {
       toast('Selecione pelo menos um item', 'warning')
@@ -667,7 +621,7 @@ const DevolucaoModal = memo(({
         {vendaSelecionada && (
           <div className="mt-4">
             <p className="text-sm font-semibold">Itens:</p>
-            {vendaSelecionada.itens.map((i: any) => {
+            {vendaSelecionada.itens.map(i => {
               const p = produtos.find(x => x.id === i.produtoId)
               if (!p) return null
               return (
@@ -733,7 +687,9 @@ export function PDV() {
   const playBeep = useCallback(() => {
     try {
       if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)()
+        const AudioContextClass = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+        if (!AudioContextClass) return
+        audioCtxRef.current = new AudioContextClass()
       }
       const osc = audioCtxRef.current.createOscillator()
       const gain = audioCtxRef.current.createGain()
@@ -762,7 +718,7 @@ export function PDV() {
     })
 
     // Valida o estoque físico somando doses e unidades que consomem o mesmo produto.
-    for (const [produtoId, quantidade] of consumoPorProduto(itensVenda, produtos)) {
+    for (const [produtoId, quantidade] of consumoEstoque(itensVenda, produtos)) {
       const produto = produtos.find(p => p.id === produtoId)
       if (!produto || produto.estoque + 0.0001 < quantidade) {
         toast(`Estoque insuficiente: ${produto?.nome || ''}`, 'danger')
@@ -838,7 +794,7 @@ export function PDV() {
   }, [carrinho, finalizarVenda, limpar])
 
   // A store e o RPC atômico devolvem o estoque uma única vez.
-  const handleDevolver = useCallback((vendaId: string, itens: any[]) => {
+  const handleDevolver = useCallback((vendaId: string, itens: ItemVenda[]) => {
     // Criar venda de devolução (valores negativos)
     const vendaDevolucao = {
       data: hoje(),

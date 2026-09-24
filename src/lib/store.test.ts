@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { vendasParaControleEstoque, type Produto, type Venda } from './store'
+import {
+  estoqueDisponivelProduto,
+  encontrarEstoqueInsuficiente,
+  quantidadeMaximaDisponivel,
+  vendasParaControleEstoque,
+  type Produto,
+  type Venda,
+} from './store'
 import { sugerirEstoqueMinimo } from './intelligence/engine'
 
 const garrafa: Produto = {
@@ -24,6 +31,28 @@ describe('controle de estoque por composição', () => {
     expect(vendasParaControleEstoque(vendas, [garrafa, dose])[0].itens).toEqual([
       { produtoId: 'garrafa', quantidade: 0.3, precoUnit: 50 },
     ])
+  })
+
+  it('expõe para a dose o estoque vendável calculado pela garrafa', () => {
+    expect(estoqueDisponivelProduto(dose, [garrafa, dose])).toBe(20)
+  })
+
+  it('considera outros itens que consomem a mesma garrafa', () => {
+    const doseDupla: Produto = {
+      ...dose,
+      id: 'dose-dupla',
+      sku: 'DOSE-DUPLA',
+      nome: 'Dose dupla',
+      unidadesPorEstoqueOrigem: 5,
+    }
+    const produtos = [garrafa, dose, doseDupla]
+    const carrinho = [{ produtoId: 'dose-dupla', quantidade: 5 }]
+
+    expect(quantidadeMaximaDisponivel('dose', carrinho, produtos)).toBe(10)
+    expect(encontrarEstoqueInsuficiente([
+      ...carrinho,
+      { produtoId: 'dose', quantidade: 11 },
+    ], produtos)?.produtoId).toBe('garrafa')
   })
 
   it('mantém ao menos uma unidade para produto sem histórico', () => {

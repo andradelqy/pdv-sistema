@@ -6,10 +6,8 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  // Bundles PWA são código de terceiros gerado pelo build. A cópia antiga da
-  // tela de entregas não é importada pelo aplicativo e fica fora do escopo do
-  // código executável até ser removida em uma limpeza de histórico separada.
-  globalIgnores(['dist', 'dev-dist', 'src/pages/EntregasPDV - Copia.tsx']),
+  // Bundles PWA são código de terceiros gerado pelo build.
+  globalIgnores(['dist', 'dev-dist']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

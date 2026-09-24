@@ -4,6 +4,8 @@ import ReactDOM from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import App from './App.tsx'
+import { ErrorBoundary } from './components/ErrorBoundary.tsx'
+import { instalarCapturaGlobalDeErros } from './lib/telemetry.ts'
 import './index.css'
 
 // Uma PWA já instalada pode continuar servindo o bundle de produção mesmo
@@ -13,6 +15,8 @@ if (import.meta.env.DEV && 'serviceWorker' in navigator) {
   void navigator.serviceWorker.getRegistrations()
     .then(registrations => Promise.all(registrations.map(registration => registration.unregister())))
 }
+
+instalarCapturaGlobalDeErros()
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,9 +28,11 @@ const queryClient = new QueryClient({
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <App />
-      <ReactQueryDevtools initialIsOpen={false} />
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <App />
+        {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} />}
+      </QueryClientProvider>
+    </ErrorBoundary>
   </React.StrictMode>,
 )

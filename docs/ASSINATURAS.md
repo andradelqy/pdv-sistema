@@ -41,9 +41,14 @@ bloqueio aparece ao voltar o foco para a janela ou em até um minuto.
 
 ## Nova loja
 
-Depois de criar os perfis e definir o `loja_id`, crie uma linha em
-`assinaturas_lojas`. Sem essa linha, o sistema falha de forma segura e não libera
-os dados da loja.
+Depois da migration `20260923182718_production_hardening.sql`, criar ou alterar
+um perfil para `role = owner` com um novo `loja_id` provisiona automaticamente
+uma única assinatura `trial` de 7 dias para a loja. Colaboradores posteriores
+reutilizam a mesma assinatura. Revise no Table Editor o nome comercial, plano e
+prazo antes de entregar o acesso ao cliente.
+
+Instalações que ainda não aplicaram essa migration precisam criar manualmente a
+linha em `assinaturas_lojas`; sem ela, o sistema falha de forma segura.
 
 ## Segurança
 

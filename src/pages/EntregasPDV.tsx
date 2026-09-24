@@ -1,7 +1,14 @@
 import { useState, useRef, useMemo, useEffect } from 'react'
-import { useStore, fmtR } from '../lib/store'
+import {
+  useStore,
+  fmtR,
+  estoqueDisponivelProduto,
+  quantidadeMaximaDisponivel,
+  encontrarEstoqueInsuficiente,
+} from '../lib/store'
 import { toast } from '../lib/toast'
 import { supabase } from '../lib/supabase'
+import { geocodificarEntrega } from '../lib/sync'
 import {
   Truck,
   Search,
@@ -21,7 +28,15 @@ import {
   Home,
   CreditCard,
   Percent,
+  Copy,
+  ExternalLink,
+  X,
+  AlertTriangle,
+  Eye,
+  Settings2,
 } from 'lucide-react'
+import { DeliveryDetailsDialog } from '../components/DeliveryDetailsDialog'
+import { DeliverySettingsDialog } from '../components/DeliverySettingsDialog'
 
 type ItemCarrinho = {
   produtoId: string
@@ -30,7 +45,7 @@ type ItemCarrinho = {
 }
 
 export function EntregasPDV() {
-  const { produtos, clientes, entregas, addEntrega, updateStatusEntrega } = useStore()
+  const { produtos, clientes, entregas, addEntrega, updateStatusEntrega, sincronizarEntregas, currentRole } = useStore()
 
   const [carrinho, setCarrinho] = useState<ItemCarrinho[]>([])
   const [busca, setBusca] = useState('')
@@ -41,6 +56,8 @@ export function EntregasPDV() {
   const [taxaEntrega, setTaxaEntrega] = useState<string>('6.00')
   const [calculandoFrete, setCalculandoFrete] = useState<boolean>(false)
   const [detalhesFrete, setDetalhesFrete] = useState<string>('Distância curta (até 3 km) · Frete fixo')
+  const [destinoCoordenadas, setDestinoCoordenadas] = useState<{ lat: number; lng: number } | null>(null)
+  const [etaMinutos, setEtaMinutos] = useState<number | null>(null)
   const [pagamento, setPagamento] = useState<string>('pix')
   const [obs, setObs] = useState('')
   const [clienteId, setClienteId] = useState('')
@@ -49,8 +66,31 @@ export function EntregasPDV() {
   const [animatingStep, setAnimatingStep] = useState(false)
   const [despachando, setDespachando] = useState(false)
   const [highlightItem, setHighlightItem] = useState<string | null>(null)
+  const [credencialEntrega, setCredencialEntrega] = useState<{ id: string; codigo: string; link: string } | null>(null)
+  const [cancelandoId, setCancelandoId] = useState<string | null>(null)
+  const [motivoCancelamento, setMotivoCancelamento] = useState('')
+  const [acaoEmAndamento, setAcaoEmAndamento] = useState<string | null>(null)
+  const [entregaDetalhadaId, setEntregaDetalhadaId] = useState<string | null>(null)
+  const [configurando, setConfigurando] = useState(false)
 
   const searchRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    let timeout: number | undefined
+    const atualizar = () => {
+      if (timeout) window.clearTimeout(timeout)
+      timeout = window.setTimeout(() => void sincronizarEntregas().catch(() => undefined), 350)
+    }
+    const channel = supabase.channel('gestao-entregas-atualizacao')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'entregas' }, atualizar)
+      .subscribe()
+    const interval = window.setInterval(atualizar, 30_000)
+    return () => {
+      if (timeout) window.clearTimeout(timeout)
+      window.clearInterval(interval)
+      void supabase.removeChannel(channel)
+    }
+  }, [sincronizarEntregas])
 
   // Auto preencher cliente
   const handleSelecionarCliente = (id: string) => {
@@ -75,49 +115,27 @@ export function EntregasPDV() {
     }, 0)
   }, [carrinho, produtos])
 
-  // Geocodificação (RESTRITA A SÃO PAULO)
+  // Geocodificação centralizada: a Edge Function aplica o contexto de cada
+  // loja, cacheia resultados e evita expor o provedor diretamente no navegador.
   useEffect(() => {
     if (!endereco || endereco.trim().length < 4) {
       setDistanciaKm(2.0)
+      setDestinoCoordenadas(null)
+      setEtaMinutos(null)
       return
     }
     const timer = setTimeout(async () => {
       setCalculandoFrete(true)
       try {
-        // Busca forçando contexto de São Paulo (Estado) e país Brasil
-        const query = encodeURIComponent(`${endereco}, SP, Brazil`)
-        const res = await fetch(
-          `https://nominatim.openstreetmap.org/search?format=json&q=${query}&countrycodes=br&limit=1`,
-          { headers: { 'User-Agent': 'pdv-sistema-entrega-app' } }
-        )
-        const data = await res.json()
-
-        // Verifica se encontrou e se é no estado de São Paulo
-        if (data && data.length > 0 && (data[0].display_name.includes("São Paulo") || data[0].display_name.includes("SP"))) {
-          const latDest = parseFloat(data[0].lat)
-          const lonDest = parseFloat(data[0].lon)
-
-          // Coordenadas atualizadas para Av. Alberto Byington, 631
-          const latLoja = -23.5031
-          const lonLoja = -46.5824
-
-          const R = 6371
-          const dLat = ((latDest - latLoja) * Math.PI) / 180
-          const dLon = ((lonDest - lonLoja) * Math.PI) / 180
-          const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                    Math.cos((latLoja * Math.PI) / 180) * Math.cos((latDest * Math.PI) / 180) *
-                    Math.sin(dLon / 2) * Math.sin(dLon / 2)
-          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-          // Multiplicador 1.35 para rota de rua (aproximação)
-          const kmReal = Math.max(1, R * c * 1.35)
-          setDistanciaKm(parseFloat(kmReal.toFixed(1)))
-        } else {
-          toast('O endereço não foi encontrado ou está fora de São Paulo.', 'warning')
-          setDistanciaKm(2.0)
-        }
-      } catch (_) {
-        toast('Erro ao buscar endereço.', 'danger')
-        setDistanciaKm(2.5)
+        const resultado = await geocodificarEntrega(endereco)
+        setDestinoCoordenadas({ lat: resultado.lat, lng: resultado.lng })
+        setEtaMinutos(resultado.etaMinutos ?? null)
+        if (resultado.distanciaKm != null) setDistanciaKm(resultado.distanciaKm)
+        else toast('Configure o endereço da loja para calcular a distância automaticamente.', 'warning')
+      } catch (error) {
+        setDestinoCoordenadas(null)
+        setEtaMinutos(null)
+        toast(error instanceof Error ? error.message : 'Erro ao buscar endereço.', 'danger')
       } finally {
         setCalculandoFrete(false)
       }
@@ -164,7 +182,9 @@ export function EntregasPDV() {
   // Funções do carrinho
   const addItem = (produtoId: string) => {
     const p = produtos.find(x => x.id === produtoId)
-    if (!p || p.estoque <= 0) {
+    const quantidadeAtual = carrinho.find(item => item.produtoId === produtoId)?.quantidade || 0
+    const quantidadeMaxima = quantidadeMaximaDisponivel(produtoId, carrinho, produtos)
+    if (!p || quantidadeAtual >= quantidadeMaxima) {
       toast('Sem estoque', 'warning')
       return
     }
@@ -187,9 +207,16 @@ export function EntregasPDV() {
       setCarrinho(prev => prev.filter(i => i.produtoId !== produtoId))
       return
     }
-    setCarrinho(prev =>
-      prev.map(i => (i.produtoId === produtoId ? { ...i, quantidade: val } : i))
-    )
+    const quantidadeMaxima = quantidadeMaximaDisponivel(produtoId, carrinho, produtos)
+    const quantidade = Math.min(val, quantidadeMaxima)
+    if (quantidade < val) toast('Quantidade limitada ao estoque físico disponível', 'warning')
+    if (quantidade <= 0) {
+      setCarrinho(prev => prev.filter(i => i.produtoId !== produtoId))
+      return
+    }
+    setCarrinho(prev => prev.map(i => (
+      i.produtoId === produtoId ? { ...i, quantidade } : i
+    )))
   }
 
   const updateDesconto = (produtoId: string, val: number) => {
@@ -276,17 +303,16 @@ export function EntregasPDV() {
       toast('Informe o endereço de entrega', 'warning')
       return
     }
-    for (const item of carrinho) {
-      const p = produtos.find(x => x.id === item.produtoId)
-      if (!p || p.estoque < item.quantidade) {
-        toast(`Estoque insuficiente: ${p?.nome || ''}`, 'danger')
-        return
-      }
+    const faltaEstoque = encontrarEstoqueInsuficiente(carrinho, produtos)
+    if (faltaEstoque) {
+      toast(`Estoque insuficiente: ${faltaEstoque.produto?.nome || 'produto indisponível'}`, 'danger')
+      return
     }
 
     setDespachando(true)
     try {
-      const pedidoId = addEntrega({
+      const resultado = await addEntrega({
+        clienteId: clienteId || undefined,
         clienteNome,
         telefone,
         endereco,
@@ -302,6 +328,8 @@ export function EntregasPDV() {
         total: totalGeral,
         taxaEntrega: taxa,
         pagamento,
+        lat: destinoCoordenadas?.lat,
+        lng: destinoCoordenadas?.lng,
         obs: obs + (descontoGeral > 0 ? ` | Desconto geral: R$ ${fmtR(descontoGeral)}` : ''),
       })
 
@@ -311,7 +339,7 @@ export function EntregasPDV() {
           type: 'broadcast',
           event: 'novo_pedido_entrega',
           payload: {
-            id: pedidoId,
+            id: resultado.id,
             clienteNome,
             endereco,
             total: totalGeral,
@@ -323,7 +351,9 @@ export function EntregasPDV() {
         void _error
       }
 
-      toast('Pedido de entrega lançado com sucesso!', 'success')
+      const link = `${window.location.origin}/acompanhar/${resultado.trackingToken}`
+      setCredencialEntrega({ id: resultado.id, codigo: resultado.codigoConfirmacao, link })
+      toast('Pedido criado e estoque reservado com segurança.', 'success')
       limparPedido()
     } catch (error) {
       toast(error instanceof Error ? `Erro ao criar pedido: ${error.message}` : 'Erro ao criar pedido', 'danger')
@@ -344,11 +374,30 @@ export function EntregasPDV() {
       tempoMedio: duracoes.length ? Math.round(duracoes.reduce((s, v) => s + v, 0) / duracoes.length) : null,
     }
   }, [entregas])
-  const cancelarEntrega = (id: string) => {
-    const motivo = window.prompt('Motivo do cancelamento (obrigatório):')
-    if (!motivo?.trim()) return
-    updateStatusEntrega(id, 'cancelado', { motivo: motivo.trim() })
-    toast('Entrega cancelada e estoque devolvido.', 'success')
+  const desempenhoEntregadores = useMemo(() => {
+    const mapa = new Map<string, { nome: string; concluidas: number; ocorrencias: number; minutos: number[] }>()
+    entregas.filter(e => e.entregadorId).forEach(e => {
+      const item = mapa.get(e.entregadorId!) || { nome: e.entregadorNome || 'Entregador', concluidas: 0, ocorrencias: 0, minutos: [] }
+      if (e.status === 'entregue') item.concluidas += 1
+      if (e.status === 'nao_entregue' || e.status === 'cancelado') item.ocorrencias += 1
+      if (e.emRotaEm && e.entregueEm) item.minutos.push((new Date(e.entregueEm).getTime() - new Date(e.emRotaEm).getTime()) / 60_000)
+      mapa.set(e.entregadorId!, item)
+    })
+    return [...mapa.entries()].map(([id, item]) => ({ ...item, id, media: item.minutos.length ? Math.round(item.minutos.reduce((s, n) => s + n, 0) / item.minutos.length) : null })).sort((a,b) => b.concluidas - a.concluidas)
+  }, [entregas])
+  const cancelarEntrega = async () => {
+    if (!cancelandoId || !motivoCancelamento.trim()) return
+    setAcaoEmAndamento(cancelandoId)
+    try {
+      await updateStatusEntrega(cancelandoId, 'cancelado', { motivo: motivoCancelamento.trim() })
+      toast('Entrega cancelada e estoque devolvido em uma única operação.', 'success')
+      setCancelandoId(null)
+      setMotivoCancelamento('')
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Não foi possível cancelar a entrega.', 'danger')
+    } finally {
+      setAcaoEmAndamento(null)
+    }
   }
 
   // Renderização do conteúdo de cada passo com animação de fade+slide
@@ -461,7 +510,7 @@ export function EntregasPDV() {
                 </div>
                 <div className="flex items-center justify-between text-xs text-muted-foreground pt-1 border-t border-border/50">
                   <span className="truncate pr-2">{detalhesFrete}</span>
-                  <span className="font-mono font-medium whitespace-nowrap">{distanciaKm} km</span>
+                  <span className="font-mono font-medium whitespace-nowrap">{distanciaKm} km{etaMinutos ? ` · ~${etaMinutos} min` : ''}</span>
                 </div>
               </div>
 
@@ -663,6 +712,7 @@ export function EntregasPDV() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {(currentRole === 'owner' || currentRole === 'gerente') && <button onClick={() => setConfigurando(true)} className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold hover:bg-muted"><Settings2 size={14} /> Configurar</button>}
           <span className="text-xs font-semibold px-3 py-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-full border border-amber-500/20 animate-pulse">
             {entregasAbertas.length} em aberto
           </span>
@@ -675,6 +725,8 @@ export function EntregasPDV() {
         <div className="card-adega p-3"><p className="text-xs text-muted-foreground">Canceladas</p><b className="text-xl text-rose-600">{indicadoresEntrega.canceladas}</b></div>
         <div className="card-adega p-3"><p className="text-xs text-muted-foreground">Tempo médio em rota</p><b className="text-xl">{indicadoresEntrega.tempoMedio == null ? '—' : `${indicadoresEntrega.tempoMedio} min`}</b></div>
       </div>
+
+      {desempenhoEntregadores.length > 0 && <details className="card-adega p-4"><summary className="cursor-pointer font-bold">Desempenho dos entregadores</summary><div className="mt-3 overflow-x-auto"><table className="tbl-adega"><thead><tr><th>Entregador</th><th>Concluídas</th><th>Ocorrências</th><th>Tempo médio</th></tr></thead><tbody>{desempenhoEntregadores.map(item => <tr key={item.id}><td className="font-semibold">{item.nome}</td><td>{item.concluidas}</td><td>{item.ocorrencias}</td><td>{item.media == null ? '—' : `${item.media} min`}</td></tr>)}</tbody></table></div></details>}
 
       {/* Grid Principal */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -692,22 +744,26 @@ export function EntregasPDV() {
           </div>
 
           <div className="overflow-y-auto max-h-72 flex flex-col gap-1">
-            {produtosFiltrados.slice(0, 20).map((p, idx) => (
-              <button
+            {produtosFiltrados.slice(0, 20).map((p, idx) => {
+              const disponivel = estoqueDisponivelProduto(p, produtos)
+              return <button
                 key={p.id}
                 onClick={() => addItem(p.id)}
-                className="flex items-center justify-between p-2.5 rounded-lg border border-border text-left hover:bg-muted transition-all hover:scale-[1.02] active:scale-95"
+                disabled={disponivel <= 0}
+                className="flex items-center justify-between p-2.5 rounded-lg border border-border text-left hover:bg-muted transition-all hover:scale-[1.02] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
                 style={{ animationDelay: `${idx * 20}ms` }}
               >
                 <div>
                   <p className="font-medium text-sm text-slate-900 dark:text-white">{p.nome}</p>
-                  <p className="text-xs text-muted-foreground">{p.sku} · Est: {p.estoque}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {p.sku} · {p.produtoEstoqueOrigemId ? `Disponível: ${disponivel} doses/un.` : `Est: ${disponivel}`}
+                  </p>
                 </div>
                 <span className="font-bold text-amber-600 dark:text-amber-400 text-sm">
                   {fmtR(p.precoVenda)}
                 </span>
               </button>
-            ))}
+            })}
           </div>
 
           {/* Itens no carrinho com animação suave */}
@@ -847,21 +903,39 @@ export function EntregasPDV() {
                     </td>
                     <td className="text-xs">{e.entregadorNome || <span className="text-muted-foreground">Aguardando</span>}</td>
                     <td className="flex items-center gap-1">
+                      <button onClick={() => setEntregaDetalhadaId(e.id)} className="rounded border p-1.5 text-muted-foreground hover:text-foreground" aria-label={`Ver detalhes da entrega ${e.id}`}><Eye size={14} /></button>
                       {e.status === 'aceito' && (
                         <button
-                          onClick={() => updateStatusEntrega(e.id, 'em_rota')}
+                          disabled={acaoEmAndamento === e.id}
+                          onClick={() => {
+                            setAcaoEmAndamento(e.id)
+                            void updateStatusEntrega(e.id, 'em_rota')
+                              .then(() => toast('Rota iniciada.', 'success'))
+                              .catch(error => toast(error instanceof Error ? error.message : 'Falha ao iniciar rota.', 'danger'))
+                              .finally(() => setAcaoEmAndamento(null))
+                          }}
                           className="px-2 py-1 bg-amber-500 hover:bg-amber-600 active:scale-95 transition-all text-white text-xs rounded font-medium"
                         >
-                          Iniciar rota
+                          {acaoEmAndamento === e.id ? 'Processando…' : 'Iniciar rota'}
                         </button>
                       )}
-                      {e.status === 'em_rota' && <button
-                        onClick={() => updateStatusEntrega(e.id, 'entregue')}
-                        className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition-all text-white text-xs rounded font-medium flex items-center gap-1"
-                      >
-                        <CheckCheck size={12} /> Entregue
-                      </button>}
-                      {e.status !== 'entregue' && <button onClick={() => cancelarEntrega(e.id)} className="px-2 py-1 border border-rose-500 text-rose-600 text-xs rounded font-medium">Cancelar</button>}
+                      {e.status === 'em_rota' && <span className="px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300">Conclusão pelo entregador</span>}
+                      {e.status === 'nao_entregue' && (
+                        <button
+                          disabled={acaoEmAndamento === e.id}
+                          onClick={() => {
+                            setAcaoEmAndamento(e.id)
+                            void updateStatusEntrega(e.id, 'pendente')
+                              .then(() => toast('Entrega devolvida à fila e liberada para um novo entregador.', 'success'))
+                              .catch(error => toast(error instanceof Error ? error.message : 'Falha ao reabrir a entrega.', 'danger'))
+                              .finally(() => setAcaoEmAndamento(null))
+                          }}
+                          className="px-2 py-1 border border-primary text-primary text-xs rounded font-medium disabled:opacity-50"
+                        >
+                          {acaoEmAndamento === e.id ? 'Processando…' : 'Reabrir'}
+                        </button>
+                      )}
+                      {e.status !== 'entregue' && <button onClick={() => { setCancelandoId(e.id); setMotivoCancelamento('') }} className="px-2 py-1 border border-rose-500 text-rose-600 text-xs rounded font-medium">Cancelar</button>}
                     </td>
                   </tr>
                 ))
@@ -870,6 +944,29 @@ export function EntregasPDV() {
           </table>
         </div>
       </div>
+
+      {credencialEntrega && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 p-4" role="dialog" aria-modal="true" aria-label="Entrega criada">
+          <div className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-2xl space-y-4">
+            <div className="flex items-start justify-between gap-4"><div><p className="text-xs uppercase tracking-wider text-emerald-600 font-bold">Entrega criada com segurança</p><h3 className="text-xl font-bold">Compartilhe com o cliente</h3></div><button onClick={() => setCredencialEntrega(null)} className="p-2 rounded-lg hover:bg-muted" aria-label="Fechar"><X size={18} /></button></div>
+            <div className="rounded-xl border bg-muted/40 p-4"><p className="text-xs text-muted-foreground">Código de confirmação</p><p className="text-3xl tracking-[0.35em] font-black mt-1">{credencialEntrega.codigo}</p><p className="text-xs text-muted-foreground mt-2">O código aparece somente agora. O entregador precisará dele para concluir.</p></div>
+            <div className="flex gap-2"><button onClick={() => { void navigator.clipboard.writeText(`Acompanhe seu pedido: ${credencialEntrega.link}\nCódigo de recebimento: ${credencialEntrega.codigo}`); toast('Link e código copiados.', 'success') }} className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2.5 text-primary-foreground font-semibold"><Copy size={16} /> Copiar mensagem</button><a href={credencialEntrega.link} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center rounded-lg border px-3" aria-label="Abrir rastreamento"><ExternalLink size={17} /></a></div>
+          </div>
+        </div>
+      )}
+
+      {cancelandoId && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 p-4" role="dialog" aria-modal="true" aria-label="Cancelar entrega">
+          <div className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-2xl space-y-4">
+            <div className="flex items-start gap-3"><div className="rounded-full bg-rose-100 p-2 text-rose-700 dark:bg-rose-950"><AlertTriangle size={20} /></div><div><h3 className="font-bold text-lg">Cancelar entrega #{cancelandoId.slice(-4)}</h3><p className="text-sm text-muted-foreground">O estoque reservado será devolvido automaticamente e a ação ficará na auditoria.</p></div></div>
+            <label className="block text-sm font-semibold">Motivo obrigatório<textarea autoFocus value={motivoCancelamento} onChange={e => setMotivoCancelamento(e.target.value)} className="mt-1 w-full min-h-24 rounded-lg border bg-background p-3 font-normal" placeholder="Ex.: cliente solicitou o cancelamento" /></label>
+            <div className="flex justify-end gap-2"><button onClick={() => setCancelandoId(null)} className="rounded-lg border px-4 py-2">Voltar</button><button disabled={!motivoCancelamento.trim() || acaoEmAndamento === cancelandoId} onClick={() => void cancelarEntrega()} className="rounded-lg bg-rose-600 px-4 py-2 text-white disabled:opacity-50">{acaoEmAndamento === cancelandoId ? 'Cancelando…' : 'Confirmar cancelamento'}</button></div>
+          </div>
+        </div>
+      )}
+
+      {entregaDetalhadaId && (() => { const entrega = entregas.find(item => item.id === entregaDetalhadaId); return entrega ? <DeliveryDetailsDialog entrega={entrega} onClose={() => setEntregaDetalhadaId(null)} /> : null })()}
+      {configurando && <DeliverySettingsDialog onClose={() => setConfigurando(false)} />}
 
       <style>{`
         @keyframes fadeIn {

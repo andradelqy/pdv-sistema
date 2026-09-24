@@ -83,6 +83,9 @@ export type Cliente = {
   email?: string
   tags?: string[]
   observacoes?: string
+  whatsappOptIn?: boolean
+  whatsappOptInEm?: string
+  whatsappOptOutEm?: string
 }
 
 export type EntradaCaixa = {
@@ -125,6 +128,7 @@ function trySync<Args extends unknown[]>(opName: string, args: Args, syncFn: (..
 
 export type PedidoEntrega = {
   id: string
+  clienteId?: string
   clienteNome: string
   telefone?: string
   endereco: string
@@ -149,6 +153,30 @@ export type PedidoEntrega = {
   naoEntregueMotivo?: string
   recebedorNome?: string
   codigoConfirmacao?: string
+  caixaId?: string
+  trackingToken?: string
+  previsaoEntregaEm?: string
+  comprovanteFotoUrl?: string
+  comprovanteLat?: number
+  comprovanteLng?: number
+  comprovantePrecisao?: number
+  vendaId?: string
+}
+
+export type ResultadoCriacaoEntrega = {
+  id: string
+  codigoConfirmacao: string
+  trackingToken: string
+}
+
+export type OpcoesStatusEntrega = {
+  motivo?: string
+  recebedorNome?: string
+  codigoConfirmacao?: string
+  comprovanteFotoUrl?: string
+  lat?: number
+  lng?: number
+  precisao?: number
 }
 
 export type PedidoCompra = {
@@ -161,6 +189,11 @@ export type PedidoCompra = {
   recebidoEm?: string
   lojaId: string
 }
+
+// Versões anteriores persistiam todo o banco local em uma chave compartilhada
+// entre contas. As mutações offline vivem na fila isolada; o cache operacional
+// é sempre reidratado do Supabase após autenticar.
+if (typeof window !== 'undefined') localStorage.removeItem('adega-pro-store')
 
 export function vendasParaControleEstoque(vendas: Venda[], produtos: Produto[]): Venda[] {
   // Devolução recompõe estoque, mas não representa demanda e não pode inflar
@@ -184,7 +217,23 @@ export function vendasParaControleEstoque(vendas: Venda[], produtos: Produto[]):
   })
 }
 
-function consumoEstoque(itens: ItemVenda[], produtos: Produto[]): Map<string, number> {
+/** Estoque vendável do item. Produtos derivados usam o saldo físico da origem. */
+export function estoqueDisponivelProduto(produto: Produto, produtos: Produto[]): number {
+  const origem = produto.produtoEstoqueOrigemId
+    ? produtos.find(item => item.id === produto.produtoEstoqueOrigemId)
+    : produto
+  if (!origem) return 0
+  const rendimento = produto.produtoEstoqueOrigemId
+    ? Math.max(1, produto.unidadesPorEstoqueOrigem || 1)
+    : 1
+  return Math.max(0, Math.floor(origem.estoque * rendimento + 0.000001))
+}
+
+/** Consolida itens derivados e físicos pelo produto que realmente sai do estoque. */
+export function consumoEstoque(
+  itens: Array<Pick<ItemVenda, 'produtoId' | 'quantidade'>>,
+  produtos: Produto[],
+): Map<string, number> {
   return itens.reduce((consumos, item) => {
     const produto = produtos.find(p => p.id === item.produtoId)
     const origemId = produto?.produtoEstoqueOrigemId || item.produtoId
@@ -192,6 +241,42 @@ function consumoEstoque(itens: ItemVenda[], produtos: Produto[]): Map<string, nu
     consumos.set(origemId, (consumos.get(origemId) || 0) + item.quantidade / divisor)
     return consumos
   }, new Map<string, number>())
+}
+
+/**
+ * Quantidade inteira máxima de um item considerando tudo que já está reservado
+ * no carrinho, inclusive outros produtos que consomem a mesma origem.
+ */
+export function quantidadeMaximaDisponivel(
+  produtoId: string,
+  itensAtuais: Array<Pick<ItemVenda, 'produtoId' | 'quantidade'>>,
+  produtos: Produto[],
+): number {
+  const produto = produtos.find(item => item.id === produtoId)
+  if (!produto) return 0
+  const origemId = produto.produtoEstoqueOrigemId || produto.id
+  const origem = produtos.find(item => item.id === origemId)
+  if (!origem) return 0
+  const outrosItens = itensAtuais.filter(item => item.produtoId !== produtoId)
+  const reservadoPorOutros = consumoEstoque(outrosItens, produtos).get(origemId) || 0
+  const rendimento = produto.produtoEstoqueOrigemId
+    ? Math.max(1, produto.unidadesPorEstoqueOrigem || 1)
+    : 1
+  return Math.max(0, Math.floor((origem.estoque - reservadoPorOutros) * rendimento + 0.000001))
+}
+
+export function encontrarEstoqueInsuficiente(
+  itens: Array<Pick<ItemVenda, 'produtoId' | 'quantidade'>>,
+  produtos: Produto[],
+): { produtoId: string; produto?: Produto; necessario: number; disponivel: number } | undefined {
+  for (const [produtoId, necessario] of consumoEstoque(itens, produtos)) {
+    const produto = produtos.find(item => item.id === produtoId)
+    const disponivel = produto?.estoque || 0
+    if (!produto || disponivel + 0.000001 < necessario) {
+      return { produtoId, produto, necessario, disponivel }
+    }
+  }
+  return undefined
 }
 
 function recalcularPoliticaEstoque(produtos: Produto[], vendas: Venda[], pedidosCompra: PedidoCompra[]): Produto[] {
@@ -246,8 +331,9 @@ type Store = {
    addCaixaEntrada: (e: EntradaCaixa) => void
    quitarFiado: (clienteId: string, valor: number, formaPagamento: string) => void
 
-   addEntrega: (p: Omit<PedidoEntrega, 'id' | 'status' | 'criadoEm' | 'data'>) => string
-    updateStatusEntrega: (id: string, status: PedidoEntrega['status'], options?: { entregador?: { id: string; nome: string }; motivo?: string; recebedorNome?: string; codigoConfirmacao?: string }) => void
+   addEntrega: (p: Omit<PedidoEntrega, 'id' | 'status' | 'criadoEm' | 'data' | 'trackingToken' | 'codigoConfirmacao'>) => Promise<ResultadoCriacaoEntrega>
+    updateStatusEntrega: (id: string, status: PedidoEntrega['status'], options?: OpcoesStatusEntrega) => Promise<PedidoEntrega>
+    sincronizarEntregas: () => Promise<void>
     
     addPedidoCompra: (p: PedidoCompra) => void
     atualizarStatusPedidoCompra: (id: string, status: PedidoCompra['status']) => void
@@ -441,153 +527,93 @@ export const useStore = create<Store>()(
         }
       }),
 
-      addEntrega: (p) => {
+      addEntrega: async (p) => {
+        const caixaId = useStore.getState().caixaAberto?.id
+        if (!caixaId && p.pagamento !== 'fiado') throw new Error('Abra o caixa antes de criar uma entrega.')
         const id = uid()
+        const codigoConfirmacao = String(Math.floor(1000 + Math.random() * 9000))
+        const trackingToken = crypto.randomUUID()
         const novaEntrega: PedidoEntrega = {
-          ...p,
-          id,
-          status: 'pendente',
-          data: hoje(),
-          criadoEm: new Date().toISOString(),
+          ...p, id, caixaId, trackingToken, status: 'pendente', data: hoje(), criadoEm: new Date().toISOString(),
         }
+
+        // O banco bloqueia as linhas de produto, valida o saldo compartilhado
+        // das composições e só então confirma entrega + reserva + auditoria.
+        const confirmada = await sync.criarEntregaAtomica(novaEntrega, codigoConfirmacao, useStore.getState().lojaId)
         set(s => {
-          // Abate estoque
           const consumo = consumoEstoque(p.itens, s.produtos)
-          const produtosComEstoque = s.produtos.map(prod => {
-            const quantidade = consumo.get(prod.id)
-            return quantidade ? { ...prod, estoque: Math.max(0, prod.estoque - quantidade) } : prod
+          const produtosBase = s.produtos.map(produto => {
+            const quantidade = consumo.get(produto.id)
+            return quantidade ? { ...produto, estoque: Math.max(0, produto.estoque - quantidade) } : produto
           })
-          const prods = recalcularPoliticaEstoque(produtosComEstoque, s.vendas, s.pedidosCompra)
-          prods.filter((prod, index) => prod !== s.produtos[index]).forEach(prod => trySync('upsertProduto', [prod, useStore.getState().lojaId], sync.upsertProduto))
-          const movimentacoes = [...s.movimentacoes, ...p.itens.map(item => ({
-            id: uid(),
-            produtoId: item.produtoId,
-            tipo: 'saida' as const,
-            quantidade: item.quantidade,
-            data: hoje(),
-            obs: `Pedido Entrega #${id.slice(-4)} (${p.clienteNome})`,
-          }))]
-          // Write-through
-          trySync('upsertEntrega', [novaEntrega, useStore.getState().lojaId], sync.upsertEntrega)
-          p.itens.forEach(item => {
-            trySync('insertMovimentacao', [{
-              id: uid(), produtoId: item.produtoId, tipo: 'saida',
-              quantidade: item.quantidade, data: hoje(),
-              obs: `Pedido Entrega #${id.slice(-4)} (${p.clienteNome})`,
-            }, useStore.getState().lojaId], sync.insertMovimentacao)
-          })
-          return {
-            entregas: [novaEntrega, ...s.entregas],
-            produtos: prods,
-            movimentacoes,
-          }
+          const produtos = recalcularPoliticaEstoque(produtosBase, s.vendas, s.pedidosCompra)
+          const movimentos: Movimentacao[] = [...consumo.entries()].map(([produtoId, quantidade]) => ({
+            id: `mov_ent_${id}_${produtoId}`, produtoId, tipo: 'saida', quantidade, data: hoje(), motivo: 'venda',
+            obs: `Reserva da entrega #${id.slice(-4)} (${p.clienteNome})`,
+          }))
+          return { entregas: [confirmada, ...s.entregas.filter(e => e.id !== confirmada.id)], produtos, movimentacoes: [...s.movimentacoes, ...movimentos] }
         })
-        return id
+        return { id: confirmada.id, codigoConfirmacao, trackingToken: confirmada.trackingToken || trackingToken }
       },
 
-      updateStatusEntrega: (id, status, options) => {
-        let novaVendaGerada: Venda | null = null
-        let entradaCaixaGerada: EntradaCaixa | null = null
-        let entregaAtualizada: PedidoEntrega | null = null
-        let movimentacoesDevolucao: Movimentacao[] = []
-        let produtosParaSincronizar: Produto[] = []
+      updateStatusEntrega: async (id, status, options = {}) => {
+        const anterior = useStore.getState().entregas.find(e => e.id === id)
+        if (!anterior) throw new Error('Entrega não encontrada nesta sessão.')
+        const atualizada = await sync.transicionarEntregaAtomica(id, status, options)
 
         set(s => {
-          const entrega = s.entregas.find(e => e.id === id)
-          if (!entrega) return s
-
-          entregaAtualizada = {
-            ...entrega,
-            status,
-            entregadorId: options?.entregador?.id ?? entrega.entregadorId,
-            entregadorNome: options?.entregador?.nome ?? entrega.entregadorNome,
-            aceitoEm: status === 'aceito' && entrega.status !== 'aceito' ? new Date().toISOString() : entrega.aceitoEm,
-            emRotaEm: status === 'em_rota' && entrega.status !== 'em_rota' ? new Date().toISOString() : entrega.emRotaEm,
-            entregueEm: status === 'entregue' && entrega.status !== 'entregue' ? new Date().toISOString() : entrega.entregueEm,
-            canceladoEm: status === 'cancelado' && entrega.status !== 'cancelado' ? new Date().toISOString() : entrega.canceladoEm,
-            canceladoMotivo: status === 'cancelado' ? options?.motivo ?? entrega.canceladoMotivo : entrega.canceladoMotivo,
-            naoEntregueEm: status === 'nao_entregue' && entrega.status !== 'nao_entregue' ? new Date().toISOString() : entrega.naoEntregueEm,
-            naoEntregueMotivo: status === 'nao_entregue' ? options?.motivo ?? entrega.naoEntregueMotivo : entrega.naoEntregueMotivo,
-            recebedorNome: options?.recebedorNome ?? entrega.recebedorNome,
-            codigoConfirmacao: options?.codigoConfirmacao ?? entrega.codigoConfirmacao,
-          }
-
-          const entregasAtualizadas = s.entregas.map(e =>
-            e.id === id ? entregaAtualizada! : e
-          )
-
-          // Se foi entregue, lança venda liquidada e entrada no caixa
+          let produtos = s.produtos
+          let movimentacoes = s.movimentacoes
           let vendas = s.vendas
           let caixaEntradas = s.caixaEntradas
-          let movimentacoes = s.movimentacoes
-          let produtosBase = s.produtos
 
-          // O estoque é reservado na criação. Ao cancelar antes da conclusão,
-          // devolvemos exatamente a reserva e mantemos uma trilha auditável.
-          if (status === 'cancelado' && entrega.status !== 'cancelado' && entrega.status !== 'entregue') {
-            const devolucao = consumoEstoque(entrega.itens, s.produtos)
-            produtosBase = s.produtos.map(produto => {
+          if (status === 'cancelado' && anterior.status !== 'cancelado') {
+            const devolucao = consumoEstoque(anterior.itens, s.produtos)
+            produtos = s.produtos.map(produto => {
               const quantidade = devolucao.get(produto.id)
               return quantidade ? { ...produto, estoque: produto.estoque + quantidade } : produto
             })
-            movimentacoesDevolucao = entrega.itens.map(item => ({
-              id: uid(), produtoId: item.produtoId, tipo: 'entrada', quantidade: item.quantidade,
-              data: hoje(), obs: `Cancelamento da entrega #${id.slice(-4)}${options?.motivo ? `: ${options.motivo}` : ''}`,
-            }))
-            movimentacoes = [...movimentacoes, ...movimentacoesDevolucao]
+            movimentacoes = [...movimentacoes, ...[...devolucao.entries()].map(([produtoId, quantidade]) => ({
+              id: `mov_can_${id}_${produtoId}`, produtoId, tipo: 'entrada' as const, quantidade, data: hoje(), motivo: 'devolucao' as const,
+              obs: `Cancelamento da entrega #${id.slice(-4)}: ${options.motivo || ''}`,
+            }))]
           }
 
-          if (status === 'entregue' && entrega.status !== 'entregue') {
-            if (!s.caixaAberto) return s
-            novaVendaGerada = {
-              id: uid(),
-              data: hoje(),
-              pagamento: entrega.pagamento,
-              itens: entrega.itens,
-              total: entrega.total,
-              obs: `Entrega Concluída (${entrega.clienteNome}) - ${entrega.endereco}`,
-              criadoEm: new Date().toISOString(),
+          // O entregador não carrega financeiro. Na gestão, refletimos o
+          // resultado confirmado pelo RPC sem disparar uma segunda gravação.
+          if (status === 'entregue' && anterior.status !== 'entregue' && s.currentRole !== 'entregador') {
+            const venda: Venda = {
+              id: atualizada.vendaId || `entrega_${id}`, data: hoje(), clienteId: anterior.clienteId,
+              pagamento: anterior.pagamento, itens: anterior.itens, total: anterior.total,
+              obs: `Entrega concluída (${anterior.clienteNome}) - ${anterior.endereco}`,
+              criadoEm: atualizada.entregueEm || new Date().toISOString(),
             }
-            vendas = [...vendas, novaVendaGerada]
-            if (entrega.pagamento !== 'fiado') {
-              entradaCaixaGerada = {
-                tipo: 'venda',
-                pagamento: entrega.pagamento,
-                valor: entrega.total,
-                data: hoje(),
-                descricao: `Entrega #${id.slice(-4)} - ${entrega.clienteNome}`,
-                caixaId: s.caixaAberto.id,
-              }
-              caixaEntradas = [...caixaEntradas, entradaCaixaGerada]
+            if (!vendas.some(item => item.id === venda.id)) vendas = [...vendas, venda]
+            if (anterior.pagamento !== 'fiado' && !caixaEntradas.some(item => item.descricao?.includes(`#${id.slice(-4)}`))) {
+              caixaEntradas = [...caixaEntradas, {
+                tipo: 'venda', pagamento: anterior.pagamento, valor: anterior.total, data: hoje(),
+                descricao: `Entrega #${id.slice(-4)} - ${anterior.clienteNome}`, caixaId: anterior.caixaId,
+              }]
             }
           }
 
-          const produtos = novaVendaGerada || movimentacoesDevolucao.length
-            ? recalcularPoliticaEstoque(produtosBase, vendas, s.pedidosCompra)
-            : produtosBase
-          produtosParaSincronizar = produtos
-
-          return {
-            entregas: entregasAtualizadas,
-            vendas,
-            caixaEntradas,
-            movimentacoes,
-            produtos,
-          }
+          produtos = recalcularPoliticaEstoque(produtos, vendas, s.pedidosCompra)
+          return { entregas: s.entregas.map(e => e.id === id ? atualizada : e), produtos, movimentacoes, vendas, caixaEntradas }
         })
+        return atualizada
+      },
 
-        if (entregaAtualizada) trySync('upsertEntrega', [entregaAtualizada as PedidoEntrega, useStore.getState().lojaId], sync.upsertEntrega)
-        movimentacoesDevolucao.forEach(mov => trySync('insertMovimentacao', [mov, useStore.getState().lojaId], sync.insertMovimentacao))
-        if (movimentacoesDevolucao.length) produtosParaSincronizar.forEach(produto => trySync('upsertProduto', [produto, useStore.getState().lojaId], sync.upsertProduto))
-        if (novaVendaGerada) {
-          const venda = novaVendaGerada as Venda
-          trySync('insertVenda', [venda, venda.itens, useStore.getState().lojaId], sync.insertVenda)
-          venda.itens.forEach(item => {
-            const produto = useStore.getState().produtos.find(p => p.id === item.produtoId)
-            if (produto) trySync('upsertProduto', [produto, useStore.getState().lojaId], sync.upsertProduto)
-          })
-        }
-        if (entradaCaixaGerada) trySync('insertCaixaEntrada', [entradaCaixaGerada as EntradaCaixa, useStore.getState().lojaId], sync.insertCaixaEntrada)
+      sincronizarEntregas: async () => {
+        const { lojaId, currentRole } = useStore.getState()
+        if (!currentRole) return
+        const remoto = await sync.carregarTudo(lojaId, currentRole)
+        set(() => currentRole === 'entregador'
+          ? { entregas: remoto.entregas }
+          : {
+              entregas: remoto.entregas, produtos: remoto.produtos, movimentacoes: remoto.movimentacoes,
+              vendas: remoto.vendas, clientes: remoto.clientes, caixaEntradas: remoto.caixaEntradas,
+              caixas: remoto.caixas, caixaAberto: remoto.caixas.find(c => !c.fechadoEm), pedidosCompra: remoto.pedidosCompra,
+            })
       },
 
       toggleTema: () => set(s => {
@@ -643,15 +669,16 @@ export const useStore = create<Store>()(
            return { pedidosCompra: pedidosAtualizados, produtos: prods }
          })
          if (recebido) {
-           trySync('upsertPedidoCompra', [recebido, useStore.getState().lojaId], sync.upsertPedidoCompra)
-           recebido.itens.forEach(item => {
-             const produto = useStore.getState().produtos.find(p => p.id === item.produtoId)
-             if (produto) trySync('upsertProduto', [produto, useStore.getState().lojaId], sync.upsertProduto)
-           })
+           // Banco confirma pedido, estoque, custo, movimentação, histórico de
+           // preço e auditoria em uma única transação idempotente.
+           trySync('receberPedidoCompraAtomico', [recebido.id, useStore.getState().lojaId], sync.receberPedidoCompraAtomico)
          }
        },
      }),
-     { name: 'adega-pro-store' }
+     {
+       name: 'orbita-preferences',
+       partialize: state => ({ tema: state.tema }),
+     }
    )
  )
  

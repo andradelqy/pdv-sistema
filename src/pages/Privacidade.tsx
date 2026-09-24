@@ -1,81 +1,41 @@
-import { LegalPage } from '../components/ui/LegalPage';
+import { LegalPage } from '../components/ui/LegalPage'
+import { canalDeContato, legalConfig } from '../config/legal'
 
 export function Privacidade() {
   return (
-    <LegalPage title="Política de Privacidade" lastUpdated="[Inserir Data Atual]" icon="shield">
-      <p>
-        A sua privacidade é importante para nós. Esta Política de Privacidade explica como coletamos, usamos, armazenamos e protegemos suas informações pessoais quando você utiliza o <strong>Órbita</strong>, em conformidade com a Lei Geral de Proteção de Dados Pessoais (LGPD - Lei nº 13.709/2018).
-      </p>
+    <LegalPage title="Política de Privacidade" lastUpdated="23/09/2026" icon="shield">
+      <p>Esta política descreve o tratamento de dados no Órbita conforme a Lei nº 13.709/2018 (LGPD). O estabelecimento contratante controla os dados de seus clientes e colaboradores; <strong>{legalConfig.nomeOperador}</strong> opera a plataforma para prestar o serviço.</p>
 
-      <h2>1. Responsável pelo Tratamento dos Dados</h2>
-      <p>
-        <strong>Órbita</strong> é a entidade responsável pelo tratamento dos seus dados pessoais.<br />
-      </p>
-
-      <h2>2. Quais dados coletamos?</h2>
-      <p>Ao utilizar o Órbita, podemos coletar as seguintes categorias de dados:</p>
+      <h2>1. Dados tratados</h2>
       <ul>
-        <li><strong>Dados de identificação:</strong> Nome completo, e-mail, CPF/CNPJ (quando aplicável para emissão de notas fiscais).</li>
-        <li><strong>Dados de contato:</strong> Telefone e endereço.</li>
-        <li><strong>Dados de pagamento:</strong> Informações de cartão de crédito (processadas exclusivamente por intermediários de pagamento parceiros, como Stripe ou PagSeguro; não armazenamos o CVV ou número completo do cartão em nossos servidores).</li>
-        <li><strong>Dados de uso:</strong> Histórico de acesso, logs de IP, tipo de dispositivo e navegador, interações dentro da plataforma (cliques, tempo de sessão).</li>
-        <li><strong>Dados de gestão (inseridos por você):</strong> Informações sobre seus produtos, clientes, fornecedores e vendas (estes são seus dados; nós apenas os armazenamos para fornecer o serviço).</li>
+        <li>Conta: identificador, nome, e-mail, função, loja e status.</li>
+        <li>Operação: produtos, estoque, vendas, compras, caixa, entregas e auditoria.</li>
+        <li>Clientes do estabelecimento: nome, telefone, e-mail, histórico, crédito, tags e consentimento de ofertas quando cadastrados.</li>
+        <li>Localização: somente quando o usuário autoriza o navegador durante ponto ou rastreamento de entrega.</li>
+        <li>Diagnóstico: versão, rota, tipo de navegador e detalhes técnicos sanitizados de falhas.</li>
       </ul>
+      <p>O Órbita não precisa de número completo de cartão ou CVV e esses dados não devem ser inseridos em campos livres.</p>
 
-      <h2>3. Como utilizamos seus dados?</h2>
-      <p>Utilizamos seus dados para as seguintes finalidades:</p>
-      <ul>
-        <li><strong>Execução do contrato:</strong> Criar e gerenciar sua conta, fornecer suporte técnico e garantir o funcionamento da assinatura.</li>
-        <li><strong>Processamento de pagamentos:</strong> Viabilizar a cobrança recorrente e emitir notas fiscais.</li>
-        <li><strong>Comunicação:</strong> Enviar avisos importantes sobre sua conta, atualizações do sistema, novidades e campanhas de marketing (você pode optar por não receber e-mails promocionais a qualquer momento).</li>
-        <li><strong>Melhoria do serviço:</strong> Analisar o uso da plataforma para corrigir bugs, otimizar a experiência do usuário e desenvolver novas funcionalidades.</li>
-        <li><strong>Segurança jurídica:</strong> Cumprir obrigações legais, prevenir fraudes e proteger os direitos da nossa empresa.</li>
-      </ul>
+      <h2>2. Finalidades e bases</h2>
+      <p>Os dados são usados para autenticar usuários, executar o contrato, registrar operações, prevenir fraude, prestar suporte, preservar auditoria e cumprir obrigações legais. Campanhas usam apenas contatos marcados como autorizados pelo estabelecimento.</p>
 
-      <h2>4. Compartilhamento de Dados</h2>
-      <p>
-        Nós <strong>NÃO</strong> vendemos ou alugamos seus dados pessoais para terceiros. Compartilhamos suas informações apenas:
-      </p>
-      <ul>
-        <li><strong>Com prestadores de serviços:</strong> Empresas parceiras que nos auxiliam na infraestrutura (hospedagem, servidores), processamento de pagamentos, envio de e-mails e análise de dados, sempre sob rigorosos contratos de confidencialidade.</li>
-        <li><strong>Por exigência legal:</strong> Quando necessário para cumprir ordem judicial, lei aplicável ou requisição de autoridades públicas.</li>
-      </ul>
+      <h2>3. Compartilhamento</h2>
+      <p>Dados podem ser processados por fornecedores essenciais de infraestrutura, autenticação, armazenamento, monitoramento e comunicação, limitados à prestação do serviço. Também podem ser apresentados por obrigação legal. Dados não são vendidos.</p>
 
-      <h2>5. Segurança dos Dados</h2>
-      <p>
-        Adotamos medidas técnicas e organizacionais adequadas para proteger seus dados contra acesso não autorizado, perda, destruição ou alteração, incluindo criptografia SSL (HTTPS), firewalls e controle de acesso restrito aos nossos colaboradores.
-      </p>
+      <h2>4. Segurança</h2>
+      <p>São usados HTTPS, autenticação, isolamento por loja, controle de função, políticas de acesso no banco, trilha de auditoria e backups conforme a configuração do ambiente. O contratante continua responsável por suas contas, dispositivos e permissões internas.</p>
 
-      <h2>6. Seus Direitos (LGPD)</h2>
-      <p>Como titular dos dados, você tem os seguintes direitos:</p>
-      <ul>
-        <li><strong>Confirmação e acesso:</strong> Saber se tratamos seus dados e solicitar uma cópia deles.</li>
-        <li><strong>Correção:</strong> Atualizar dados incompletos, inexatos ou desatualizados.</li>
-        <li><strong>Anonimização, bloqueio ou eliminação:</strong> Solicitar a remoção de dados desnecessários ou tratados em desconformidade com a lei.</li>
-        <li><strong>Portabilidade:</strong> Solicitar a transferência dos seus dados para outro fornecedor de serviço (quando tecnicamente viável).</li>
-        <li><strong>Revogação do consentimento:</strong> Retirar seu consentimento para tratamentos baseados em consentimento (sem prejudicar a legalidade do tratamento realizado anteriormente).</li>
-      </ul>
-      <p>Para exercer seus direitos, entre em contato através do e-mail <strong>[dpo@seudominio.com]</strong>.</p>
+      <h2>5. Retenção</h2>
+      <p>Dados permanecem pelo prazo necessário ao serviço, à segurança e às obrigações legais. Prazos específicos podem variar conforme a natureza fiscal, trabalhista ou contratual. Solicitações de eliminação são avaliadas considerando essas obrigações.</p>
 
-      <h2>7. Cookies</h2>
-      <p>
-        Utilizamos cookies essenciais para garantir a autenticação da sua sessão (login) e a segurança da plataforma. Você pode desabilitar os cookies nas configurações do seu navegador, mas isso pode prejudicar o funcionamento de algumas funcionalidades.
-      </p>
+      <h2>6. Direitos</h2>
+      <p>O titular pode solicitar confirmação, acesso, correção, portabilidade quando aplicável, informação sobre compartilhamento, revogação de consentimento e eliminação nos limites legais. Solicitações devem ser enviadas para {canalDeContato(legalConfig.emailPrivacidade)}.</p>
 
-      <h2>8. Retenção dos Dados</h2>
-      <p>
-        Manteremos seus dados pessoais apenas pelo tempo necessário para cumprir as finalidades descritas nesta Política, incluindo períodos de retenção legal exigidos pelas leis fiscais e contábeis (por exemplo, 5 anos para fins de comprovante fiscal, conforme Código Civil).
-      </p>
+      <h2>7. Armazenamento local e sessão</h2>
+      <p>O navegador armazena preferências, sessão quando “Lembrar-me” é ativado, carrinho e operações pendentes de sincronização. Sem essa opção, a sessão termina com o encerramento do navegador. O usuário pode limpar esses dados pelo navegador ou pelas ferramentas do Órbita.</p>
 
-      <h2>9. Dados de Menores de Idade</h2>
-      <p>
-        O Órbita não se destina a menores de 18 anos. Não coletamos intencionalmente dados de menores de idade. Se você é responsável legal e descobrir que um menor forneceu dados a nós, entre em contato para removê-los.
-      </p>
-
-      <h2>10. Atualizações desta Política</h2>
-      <p>
-        Esta Política de Privacidade poderá ser alterada a qualquer momento. Qualquer mudança significativa será comunicada por e-mail ou por meio de um aviso em destaque em nossa plataforma.
-      </p>
+      <h2>8. Alterações e contato</h2>
+      <p>Alterações relevantes serão comunicadas. Dúvidas de privacidade devem ser encaminhadas para {canalDeContato(legalConfig.emailPrivacidade)}.</p>
     </LegalPage>
-  );
+  )
 }

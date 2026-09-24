@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { useStore, fmtR, cortarData } from '../lib/store'
 import { hojeBRT, cortarDataBRT } from '../lib/dateBR'
 import { lucroDoPeriodo } from '../lib/lucro'
-import { motion } from 'motion/react'
+import { motion, type Variants } from 'motion/react'
 import {
   Package,
   Coins,
@@ -12,6 +12,7 @@ import {
   BarChart3,
   RefreshCw,
   DollarSign,
+  type LucideIcon,
 } from 'lucide-react'
 import {
   LineChart,
@@ -37,7 +38,7 @@ const KpiCard = ({
   label: string
   value: string | number
   sub?: string
-  icon: any
+  icon: LucideIcon
   color: string
   variation?: { value: number; label: string } | null
 }) => {
@@ -93,7 +94,9 @@ const KpiCard = ({
 // ============================================================
 // 2. COMPONENTE PRINCIPAL
 // ============================================================
-export function Dashboard({ onNavigate }: { onNavigate?: (page: any) => void }) {
+type DashboardDestination = 'compras' | 'produtos' | 'clientes' | 'alertas'
+
+export function Dashboard({ onNavigate }: { onNavigate?: (page: DashboardDestination) => void }) {
   const { produtos, vendas, caixaEntradas, clientes } = useStore()
 
   // --- Estado de filtro de período ---
@@ -251,7 +254,7 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: any) => void }) 
   // ============================================================
   // ANIMAÇÕES (stagger em cascata)
   // ============================================================
-  const containerVariants: any = {
+  const containerVariants: Variants = {
     hidden: { opacity: 0 },
     show: {
       opacity: 1,
@@ -262,7 +265,7 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: any) => void }) 
     },
   }
 
-  const itemVariants: any = {
+  const itemVariants: Variants = {
     hidden: { y: 20, opacity: 0 },
     show: { y: 0, opacity: 1, transition: { duration: 0.4, ease: 'easeOut' } },
   }
@@ -287,10 +290,10 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: any) => void }) 
           <div className="flex items-center gap-2">
             {/* Seletor de período */}
             <div className="flex items-center gap-1 bg-white/80 dark:bg-white/5 backdrop-blur-sm border border-white/20 dark:border-white/10 rounded-lg p-1">
-              {['hoje', 'semana', 'mes'].map(p => (
+              {(['hoje', 'semana', 'mes'] as const).map(p => (
                 <button
                   key={p}
-                  onClick={() => setPeriodo(p as any)}
+                  onClick={() => setPeriodo(p)}
                   className={`px-3 py-1 text-xs font-medium rounded-md transition ${
                     periodo === p
                       ? 'bg-amber-500 text-white'
@@ -396,7 +399,7 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: any) => void }) 
                   width={50}
                 />
                 <Tooltip
-                  formatter={(value: any) => fmtR(Number(value) || 0)}
+                  formatter={(value) => fmtR(Number(value) || 0)}
                   contentStyle={{
                     background: 'rgba(255,255,255,0.9)',
                     backdropFilter: 'blur(8px)',

@@ -4,8 +4,7 @@ import { supabase } from './lib/supabase'
 type Perfil = {
   id: string
   nome: string
-  cargo: string
-  pin: string
+  role: string
 }
 
 export function PontoEletronico() {
@@ -18,7 +17,7 @@ export function PontoEletronico() {
   // Carrega a lista de funcionários
   useEffect(() => {
     async function carregarPerfis() {
-      const { data } = await supabase.from('perfis').select('*').order('nome')
+      const { data } = await supabase.from('perfis').select('id,nome,role').order('nome')
       if (data) setPerfis(data)
     }
     carregarPerfis()
@@ -30,11 +29,6 @@ export function PontoEletronico() {
     
     if (!funcionario) {
       setStatus('⚠️ Selecione um funcionário.')
-      return
-    }
-
-    if (funcionario.pin !== pinDigitado) {
-      setStatus('❌ PIN incorreto!')
       return
     }
 
@@ -50,11 +44,12 @@ export function PontoEletronico() {
       async (position) => {
         const { latitude, longitude } = position.coords
 
-        const { error } = await supabase.from('ponto_eletronico').insert({
-          usuario_id: funcionarioId,
-          tipo,
-          latitude,
-          longitude
+        const { error } = await supabase.rpc('registrar_ponto', {
+          p_funcionario_id: funcionarioId,
+          p_pin: pinDigitado,
+          p_tipo: tipo,
+          p_latitude: latitude,
+          p_longitude: longitude,
         })
 
         setCarregando(false)
@@ -72,6 +67,20 @@ export function PontoEletronico() {
       },
       { enableHighAccuracy: true }
     )
+  }
+
+  const definirPin = async () => {
+    if (!funcionarioId) return setStatus('⚠️ Selecione um funcionário.')
+    if (!/^\d{4,8}$/.test(pinDigitado)) return setStatus('⚠️ O PIN deve ter de 4 a 8 números.')
+    setCarregando(true)
+    const { error } = await supabase.rpc('definir_pin_ponto', {
+      p_funcionario_id: funcionarioId,
+      p_novo_pin: pinDigitado,
+    })
+    setCarregando(false)
+    if (error) return setStatus(`❌ Erro ao definir PIN: ${error.message}`)
+    setPinDigitado('')
+    setStatus('✅ PIN definido com segurança.')
   }
 
   return (
@@ -94,7 +103,7 @@ export function PontoEletronico() {
           >
             <option value="">Selecione...</option>
             {perfis.map((p) => (
-              <option key={p.id} value={p.id}>{p.nome} ({p.cargo})</option>
+              <option key={p.id} value={p.id}>{p.nome} ({p.role})</option>
             ))}
           </select>
         </div>
@@ -103,12 +112,22 @@ export function PontoEletronico() {
           <label className="block text-sm font-medium mb-1">PIN Individual</label>
           <input 
             type="password" 
-            maxLength={4}
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={8}
             className="w-full p-2 border border-border rounded bg-background text-center text-lg tracking-widest"
             placeholder="****"
             value={pinDigitado}
             onChange={(e) => setPinDigitado(e.target.value)}
           />
+          <button
+            type="button"
+            onClick={() => void definirPin()}
+            disabled={carregando || !funcionarioId}
+            className="mt-2 text-xs font-semibold text-primary hover:underline disabled:opacity-50"
+          >
+            Definir ou alterar PIN deste colaborador
+          </button>
         </div>
 
         <div className="grid grid-cols-2 gap-4 pt-2">

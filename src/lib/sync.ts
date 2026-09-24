@@ -22,8 +22,9 @@ export type SyncQueueStatus = {
   nextRetryAt?: number;
 };
 
-const QUEUE_KEY = 'sync_queue';
-const STATUS_KEY = 'sync_queue_status';
+const LEGACY_QUEUE_KEY = 'sync_queue';
+const LEGACY_STATUS_KEY = 'sync_queue_status';
+const QUARANTINE_KEY = 'orbita:sync:legacy-quarantine';
 const SYNC_EVENT = 'orbita:sync-status';
 const RETRY_BASE_MS = 2_000;
 const RETRY_MAX_MS = 60_000;
@@ -31,10 +32,15 @@ const RETRY_MAX_MS = 60_000;
 let processamentoAtual: Promise<SyncQueueStatus> | null = null;
 let sincronizacaoAutomaticaAtiva = false;
 let timerRetry: number | undefined;
+let activeSyncScope = 'unscoped';
 
-function readQueue(): SyncJob[] {
+function scopedKey(kind: 'queue' | 'status') {
+  return `orbita:sync:${activeSyncScope}:${kind}`;
+}
+
+function parseQueue(raw: string | null): SyncJob[] {
   try {
-    const value = JSON.parse(localStorage.getItem(QUEUE_KEY) ?? '[]') as Array<Partial<SyncJob> & { timestamp?: number }>;
+    const value = JSON.parse(raw ?? '[]') as Array<Partial<SyncJob> & { timestamp?: number }>;
     return value.filter(job => job?.opName && Array.isArray(job.args)).map(job => ({
       id: job.id ?? crypto.randomUUID(), opName: String(job.opName), args: job.args!,
       createdAt: Number(job.createdAt ?? job.timestamp ?? Date.now()),
@@ -44,13 +50,45 @@ function readQueue(): SyncJob[] {
   } catch { return []; }
 }
 
+/**
+ * Isola operações locais por loja e usuário. A fila legada só é migrada se
+ * pertencer à loja atual; o restante fica em quarentena para não ser executado
+ * por outra conta nem perdido silenciosamente.
+ */
+export function configurarEscopoSync(lojaId?: string | null, userId?: string | null) {
+  activeSyncScope = lojaId && userId
+    ? `${encodeURIComponent(lojaId)}:${encodeURIComponent(userId)}`
+    : 'unscoped';
+  if (!lojaId || !userId) return;
+
+  const targetKey = scopedKey('queue');
+  if (localStorage.getItem(targetKey) === null) {
+    const legacy = parseQueue(localStorage.getItem(LEGACY_QUEUE_KEY));
+    const belongsToStore = (job: SyncJob) => job.args.some(value => value === lojaId);
+    const eligible = legacy.filter(belongsToStore);
+    const quarantined = legacy.filter(job => !belongsToStore(job));
+    if (eligible.length) localStorage.setItem(targetKey, JSON.stringify(eligible));
+    if (quarantined.length) {
+      const previous = parseQueue(localStorage.getItem(QUARANTINE_KEY));
+      localStorage.setItem(QUARANTINE_KEY, JSON.stringify([...previous, ...quarantined]));
+    }
+    localStorage.removeItem(LEGACY_QUEUE_KEY);
+    localStorage.removeItem(LEGACY_STATUS_KEY);
+  }
+  window.dispatchEvent(new CustomEvent(SYNC_EVENT, { detail: getSyncQueueStatus() }));
+}
+
+function readQueue(): SyncJob[] {
+  return parseQueue(localStorage.getItem(scopedKey('queue')));
+}
+
 function readStoredStatus(): SyncQueueStatus {
-  try { return JSON.parse(localStorage.getItem(STATUS_KEY) ?? '{}') as SyncQueueStatus; }
+  try { return JSON.parse(localStorage.getItem(scopedKey('status')) ?? '{}') as SyncQueueStatus; }
   catch { return { pending: 0, failed: 0 }; }
 }
 
 function writeQueue(queue: SyncJob[], changes: Partial<SyncQueueStatus> = {}) {
-  localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+  localStorage.setItem(scopedKey('queue'), JSON.stringify(queue));
   const previous = readStoredStatus();
   const lastError = [...queue].reverse().find(job => job.lastError)?.lastError;
   const status: SyncQueueStatus = {
@@ -65,7 +103,7 @@ function writeQueue(queue: SyncJob[], changes: Partial<SyncQueueStatus> = {}) {
     status.lastError = undefined;
     status.nextRetryAt = undefined;
   }
-  localStorage.setItem(STATUS_KEY, JSON.stringify(status));
+  localStorage.setItem(scopedKey('status'), JSON.stringify(status));
   window.dispatchEvent(new CustomEvent(SYNC_EVENT, { detail: status }));
   return status;
 }
@@ -157,6 +195,64 @@ function check(error: { message: string; hint?: string | null; details?: string 
 
 export type CargaRemota = { produtos: Produto[]; movimentacoes: Movimentacao[]; vendas: Venda[]; clientes: Cliente[]; caixaEntradas: EntradaCaixa[]; caixas: Caixa[]; entregas: PedidoEntrega[]; pedidosCompra: PedidoCompra[]; };
 
+export type PapelOperacional = 'owner' | 'gerente' | 'atendente' | 'entregador';
+
+export type EntregaEvento = {
+  id: number;
+  tipo: string;
+  statusAnterior?: string;
+  statusNovo?: string;
+  detalhe: Record<string, unknown>;
+  lat?: number;
+  lng?: number;
+  precisao?: number;
+  criadoEm: string;
+};
+
+function mapEntrega(r: Row): PedidoEntrega {
+  const itens = ((r.itens ?? []) as Row[]).map(item => ({
+    produtoId: String(item.produtoId ?? item.produto_id),
+    produtoNome: (item.produtoNome ?? item.produto_nome) as string | undefined,
+    quantidade: Number(item.quantidade),
+    precoUnit: Number(item.precoUnit ?? item.preco_unit),
+  }));
+  return {
+    id: String(r.id),
+    clienteId: r.cliente_id as string | undefined,
+    clienteNome: String(r.cliente_nome),
+    telefone: r.telefone as string | undefined,
+    endereco: String(r.endereco),
+    itens,
+    total: Number(r.total ?? 0),
+    taxaEntrega: Number(r.taxa_entrega ?? 0),
+    pagamento: String(r.pagamento ?? ''),
+    status: r.status as PedidoEntrega['status'],
+    entregadorId: r.entregador_id as string | undefined,
+    entregadorNome: r.entregador_nome as string | undefined,
+    data: String(r.data ?? ''),
+    criadoEm: String(r.criado_em),
+    obs: r.obs as string | undefined,
+    lat: r.lat == null ? undefined : Number(r.lat),
+    lng: r.lng == null ? undefined : Number(r.lng),
+    aceitoEm: r.aceito_em as string | undefined,
+    emRotaEm: r.em_rota_em as string | undefined,
+    entregueEm: r.entregue_em as string | undefined,
+    canceladoEm: r.cancelado_em as string | undefined,
+    canceladoMotivo: r.cancelado_motivo as string | undefined,
+    naoEntregueEm: r.nao_entregue_em as string | undefined,
+    naoEntregueMotivo: r.nao_entregue_motivo as string | undefined,
+    recebedorNome: r.recebedor_nome as string | undefined,
+    comprovanteFotoUrl: r.comprovante_foto_url as string | undefined,
+    comprovanteLat: r.comprovante_lat == null ? undefined : Number(r.comprovante_lat),
+    comprovanteLng: r.comprovante_lng == null ? undefined : Number(r.comprovante_lng),
+    comprovantePrecisao: r.comprovante_precisao_m == null ? undefined : Number(r.comprovante_precisao_m),
+    trackingToken: r.tracking_token as string | undefined,
+    previsaoEntregaEm: r.previsao_entrega_em as string | undefined,
+    caixaId: r.caixa_id as string | undefined,
+    vendaId: r.venda_id as string | undefined,
+  };
+}
+
 /**
  * A API do Supabase pagina respostas grandes. Trazer apenas a primeira página
  * faria o motor enxergar um histórico parcial e subestimar a demanda.
@@ -167,7 +263,7 @@ async function carregarTabelaDaLoja(table: string, lojaId: string): Promise<Row[
   let inicio = 0
 
   while (true) {
-    const resultado = await supabase.from(table).select('*').eq('loja_id', lojaId).range(inicio, inicio + tamanhoPagina - 1)
+    const resultado = await supabase.from(table).select('*').eq('loja_id', lojaId).order('id', { ascending: true }).range(inicio, inicio + tamanhoPagina - 1)
     check(resultado.error)
     const pagina = (resultado.data ?? []) as Row[]
     rows.push(...pagina)
@@ -177,7 +273,13 @@ async function carregarTabelaDaLoja(table: string, lojaId: string): Promise<Row[
 }
 
 /** Lê uma loja inteira. O acesso de membros é garantido por RLS; nunca por user_id nesta consulta. */
-export async function carregarTudo(lojaId: string): Promise<CargaRemota> {
+export async function carregarTudo(lojaId: string, papel?: PapelOperacional): Promise<CargaRemota> {
+  if (papel === 'entregador') {
+    const { data, error } = await supabase.rpc('listar_entregas_entregador');
+    check(error);
+    const entregas = (Array.isArray(data) ? data : []) as Row[];
+    return { produtos: [], movimentacoes: [], vendas: [], clientes: [], caixaEntradas: [], caixas: [], entregas: entregas.map(mapEntrega), pedidosCompra: [] };
+  }
   const [p, m, v, iv, c, cx, ce, en, pc, ipc] = await Promise.all(['produtos', 'movimentacoes', 'vendas', 'itens_venda', 'clientes', 'caixas', 'caixa_entradas', 'entregas', 'pedidos_compra', 'itens_pedido_compra'].map(table => carregarTabelaDaLoja(table, lojaId)));
   const by = <T>(rows: Row[], key: string, fn: (r: Row) => T): Map<string, T[]> => rows.reduce((map, r) => { const id = String(r[key]); map.set(id, [...(map.get(id) ?? []), fn(r)]); return map; }, new Map<string, T[]>());
   const itensVenda = by<ItemVenda>(iv, 'venda_id', r => ({ produtoId: String(r.produto_id), quantidade: Number(r.quantidade), precoUnit: Number(r.preco_unit), produtoNome: r.produto_nome as string | undefined }));
@@ -186,10 +288,10 @@ export async function carregarTudo(lojaId: string): Promise<CargaRemota> {
     produtos: p.map(r => ({ id: String(r.id), sku: String(r.sku), nome: String(r.nome), barcode: r.barcode as string | undefined, descricao: r.descricao as string | undefined, categoria: r.categoria as string | undefined, fornecedor: r.fornecedor as string | undefined, leadTime: Number(r.lead_time), precoCompra: Number(r.preco_compra), precoVenda: Number(r.preco_venda), imposto: Number(r.imposto), frete: Number(r.frete), comissao: Number(r.comissao), precoCompetidor: r.preco_competidor == null ? undefined : Number(r.preco_competidor), margemAlvo: Number(r.margem_alvo), estoque: Number(r.estoque), estoqueMin: Number(r.estoque_min), pontoPedido: Number(r.ponto_pedido), qualidade: Number(r.qualidade), imagem: r.imagem as string | undefined, produtoEstoqueOrigemId: r.produto_estoque_origem_id as string | undefined, unidadesPorEstoqueOrigem: r.unidades_por_estoque_origem == null ? undefined : Number(r.unidades_por_estoque_origem), automaticQualityScore: r.automatic_quality_score == null ? undefined : Number(r.automatic_quality_score), automaticQualityLevel: r.automatic_quality_level == null ? undefined : Number(r.automatic_quality_level), confidenceScore: r.confidence_score == null ? undefined : Number(r.confidence_score), quantidadeMinimaCompra: r.quantidade_minima_compra == null ? undefined : Number(r.quantidade_minima_compra), multiploCompra: r.multiplo_compra == null ? undefined : Number(r.multiplo_compra) })),
     movimentacoes: m.map(r => ({ id: String(r.id), produtoId: String(r.produto_id), tipo: r.tipo as Movimentacao['tipo'], quantidade: Number(r.quantidade), data: String(r.data), lote: r.lote as string | undefined, validade: r.validade as string | undefined, obs: r.obs as string | undefined, motivo: r.motivo as Movimentacao['motivo'], aprovadoPor: r.aprovado_por as string | undefined, aprovadoEm: r.aprovado_em as string | undefined })),
     vendas: v.map(r => ({ id: String(r.id), data: String(r.data), clienteId: r.cliente_id as string | undefined, pagamento: String(r.pagamento), itens: itensVenda.get(String(r.id)) ?? [], total: Number(r.total), obs: r.obs as string | undefined, criadoEm: String(r.criado_em) })),
-    clientes: c.map(r => ({ id: String(r.id), nome: String(r.nome), telefone: r.telefone as string | undefined, limite: Number(r.limite), saldo: Number(r.saldo), compras: Number(r.compras), ultimaCobranca: r.ultima_cobranca as string | undefined, email: r.email as string | undefined, tags: (r.tags ?? []) as string[], observacoes: r.observacoes as string | undefined })),
+    clientes: c.map(r => ({ id: String(r.id), nome: String(r.nome), telefone: r.telefone as string | undefined, limite: Number(r.limite), saldo: Number(r.saldo), compras: Number(r.compras), ultimaCobranca: r.ultima_cobranca as string | undefined, email: r.email as string | undefined, tags: (r.tags ?? []) as string[], observacoes: r.observacoes as string | undefined, whatsappOptIn: Boolean(r.whatsapp_opt_in), whatsappOptInEm: r.whatsapp_opt_in_em as string | undefined, whatsappOptOutEm: r.whatsapp_opt_out_em as string | undefined })),
     caixas: cx.map(r => ({ id: String(r.id), abertoEm: String(r.aberto_em), fechadoEm: r.fechado_em as string | undefined, faturamentoBruto: r.faturamento_bruto == null ? undefined : Number(r.faturamento_bruto), lucroLiquido: r.lucro_liquido == null ? undefined : Number(r.lucro_liquido), vendas: r.vendas == null ? undefined : Number(r.vendas) })),
     caixaEntradas: ce.map(r => ({ tipo: r.tipo as EntradaCaixa['tipo'], pagamento: r.pagamento as string | undefined, valor: Number(r.valor), data: String(r.data), descricao: r.descricao as string | undefined, caixaId: r.caixa_id as string | undefined })),
-    entregas: en.map(r => ({ id: String(r.id), clienteNome: String(r.cliente_nome), telefone: r.telefone as string | undefined, endereco: String(r.endereco), itens: (r.itens ?? []) as ItemVenda[], total: Number(r.total), taxaEntrega: Number(r.taxa_entrega), pagamento: String(r.pagamento), status: r.status as PedidoEntrega['status'], entregadorId: r.entregador_id as string | undefined, entregadorNome: r.entregador_nome as string | undefined, data: String(r.data), criadoEm: String(r.criado_em), obs: r.obs as string | undefined, lat: r.lat == null ? undefined : Number(r.lat), lng: r.lng == null ? undefined : Number(r.lng), aceitoEm: r.aceito_em as string | undefined, emRotaEm: r.em_rota_em as string | undefined, entregueEm: r.entregue_em as string | undefined, canceladoEm: r.cancelado_em as string | undefined, canceladoMotivo: r.cancelado_motivo as string | undefined, naoEntregueEm: r.nao_entregue_em as string | undefined, naoEntregueMotivo: r.nao_entregue_motivo as string | undefined, recebedorNome: r.recebedor_nome as string | undefined, codigoConfirmacao: r.codigo_confirmacao as string | undefined })),
+    entregas: en.map(mapEntrega),
     pedidosCompra: pc.map(r => ({ id: String(r.id), fornecedorId: r.fornecedor_id == null ? undefined : String(r.fornecedor_id), fornecedorNome: r.fornecedor_nome as string | undefined, status: r.status as PedidoCompra['status'], itens: itensPedido.get(String(r.id)) ?? [], dataPedido: String(r.data_pedido), lojaId, recebidoEm: r.recebido_em as string | undefined })),
   };
 }
@@ -199,7 +301,7 @@ export async function upsertProduto(p: Produto, lojaId: string) { const { error 
 export async function deleteProduto(id: string, lojaId: string) { const { error } = await supabase.from('produtos').delete().eq('id', id).eq('loja_id', lojaId); check(error); }
 export async function insertMovimentacao(m: Movimentacao, lojaId: string) { const { error } = await supabase.from('movimentacoes').upsert({ id: m.id, user_id: await userOrThrow(), loja_id: lojaId, produto_id: m.produtoId, tipo: m.tipo, quantidade: m.quantidade, data: m.data, lote: m.lote, validade: m.validade, obs: m.obs, motivo: m.motivo, aprovado_por: m.aprovadoPor, aprovado_em: m.aprovadoEm }); check(error); }
 export async function deleteMovimentacao(id: string, lojaId: string) { const { error } = await supabase.from('movimentacoes').delete().eq('id', id).eq('loja_id', lojaId); check(error); }
-export async function upsertCliente(c: Cliente, lojaId: string) { const { error } = await supabase.from('clientes').upsert({ id: c.id, user_id: await userOrThrow(), loja_id: lojaId, nome: c.nome, telefone: c.telefone, limite: c.limite, saldo: c.saldo, compras: c.compras, ultima_cobranca: c.ultimaCobranca, email: c.email, tags: c.tags ?? [], observacoes: c.observacoes }); check(error); }
+export async function upsertCliente(c: Cliente, lojaId: string) { const { error } = await supabase.from('clientes').upsert({ id: c.id, user_id: await userOrThrow(), loja_id: lojaId, nome: c.nome, telefone: c.telefone, limite: c.limite, saldo: c.saldo, compras: c.compras, ultima_cobranca: c.ultimaCobranca, email: c.email, tags: c.tags ?? [], observacoes: c.observacoes, whatsapp_opt_in: Boolean(c.whatsappOptIn), whatsapp_opt_in_em: c.whatsappOptIn ? (c.whatsappOptInEm || new Date().toISOString()) : null, whatsapp_opt_out_em: c.whatsappOptIn ? null : (c.whatsappOptOutEm || undefined) }); check(error); }
 export async function deleteCliente(id: string, lojaId: string) { const { error } = await supabase.from('clientes').delete().eq('id', id).eq('loja_id', lojaId); check(error); }
 export async function upsertCaixa(c: Caixa, lojaId: string) { const { error } = await supabase.from('caixas').upsert({ id: c.id, user_id: await userOrThrow(), loja_id: lojaId, aberto_em: c.abertoEm, fechado_em: c.fechadoEm, faturamento_bruto: c.faturamentoBruto, lucro_liquido: c.lucroLiquido, vendas: c.vendas }); check(error); }
 export async function insertCaixaEntrada(e: EntradaCaixa, lojaId: string) { const { error } = await supabase.from('caixa_entradas').insert({ user_id: await userOrThrow(), loja_id: lojaId, caixa_id: e.caixaId, tipo: e.tipo, pagamento: e.pagamento, valor: e.valor, data: e.data, descricao: e.descricao }); check(error); }
@@ -211,14 +313,193 @@ export async function confirmarVendaAtomica(v: Venda, caixaId: string, lojaId: s
   const { error } = await supabase.rpc('confirmar_venda_atomica', { p_venda: venda, p_itens: itens, p_caixa_id: caixaId });
   check(error);
 }
-export async function upsertEntrega(e: PedidoEntrega, lojaId: string) { const { error } = await supabase.from('entregas').upsert({ id: e.id, user_id: await userOrThrow(), loja_id: lojaId, cliente_nome: e.clienteNome, telefone: e.telefone, endereco: e.endereco, itens: e.itens, total: e.total, taxa_entrega: e.taxaEntrega, pagamento: e.pagamento, status: e.status, entregador_id: e.entregadorId, entregador_nome: e.entregadorNome, data: e.data, criado_em: e.criadoEm, obs: e.obs, lat: e.lat, lng: e.lng, aceito_em: e.aceitoEm, em_rota_em: e.emRotaEm, entregue_em: e.entregueEm, cancelado_em: e.canceladoEm, cancelado_motivo: e.canceladoMotivo, nao_entregue_em: e.naoEntregueEm, nao_entregue_motivo: e.naoEntregueMotivo, recebedor_nome: e.recebedorNome, codigo_confirmacao: e.codigoConfirmacao }); check(error); }
-export async function atualizarLocalizacaoEntregador(localizacao: { entregadorId: string; entregadorNome: string; entregaId: string; lat: number; lng: number; precisao?: number }, lojaId: string) {
-  const atualizadoEm = new Date().toISOString();
-  const [{ error: atualError }, { error: pontoError }] = await Promise.all([
-    supabase.from('rastreio_entregadores').upsert({ entregador_id: localizacao.entregadorId, loja_id: lojaId, entregador_nome: localizacao.entregadorNome, lat: localizacao.lat, lng: localizacao.lng, atualizado_em: atualizadoEm }, { onConflict: 'entregador_id,loja_id' }),
-    supabase.from('rastreio_pontos').insert({ entregador_id: localizacao.entregadorId, loja_id: lojaId, entrega_id: localizacao.entregaId, lat: localizacao.lat, lng: localizacao.lng, precisao_m: localizacao.precisao }),
-  ]);
-  check(atualError); check(pontoError);
+function entregaParaRpc(e: PedidoEntrega, codigoConfirmacao?: string) {
+  return {
+    id: e.id,
+    cliente_id: e.clienteId,
+    cliente_nome: e.clienteNome,
+    telefone: e.telefone,
+    endereco: e.endereco,
+    itens: e.itens.map(item => ({ produto_id: item.produtoId, produto_nome: item.produtoNome, quantidade: item.quantidade, preco_unit: item.precoUnit })),
+    total: e.total,
+    taxa_entrega: e.taxaEntrega,
+    pagamento: e.pagamento,
+    data: e.data,
+    criado_em: e.criadoEm,
+    obs: e.obs,
+    lat: e.lat,
+    lng: e.lng,
+    caixa_id: e.caixaId,
+    tracking_token: e.trackingToken,
+    codigo_confirmacao: codigoConfirmacao,
+  };
+}
+
+export async function criarEntregaAtomica(e: PedidoEntrega, codigoConfirmacao: string, lojaId: string) {
+  void lojaId;
+  const { data, error } = await supabase.rpc('criar_entrega_atomica', { p_entrega: entregaParaRpc(e, codigoConfirmacao) });
+  check(error);
+  return mapEntrega((data ?? {}) as Row);
+}
+
+export type EntregaTransitionDetails = {
+  motivo?: string;
+  recebedorNome?: string;
+  codigoConfirmacao?: string;
+  comprovanteFotoUrl?: string;
+  lat?: number;
+  lng?: number;
+  precisao?: number;
+};
+
+export async function transicionarEntregaAtomica(id: string, status: PedidoEntrega['status'], detalhes: EntregaTransitionDetails = {}) {
+  const { data, error } = await supabase.rpc('transicionar_entrega_atomica', {
+    p_entrega_id: id,
+    p_novo_status: status,
+    p_detalhes: {
+      motivo: detalhes.motivo,
+      recebedor_nome: detalhes.recebedorNome,
+      codigo_confirmacao: detalhes.codigoConfirmacao,
+      comprovante_foto_url: detalhes.comprovanteFotoUrl,
+      lat: detalhes.lat,
+      lng: detalhes.lng,
+      precisao_m: detalhes.precisao,
+    },
+  });
+  check(error);
+  return mapEntrega((data ?? {}) as Row);
+}
+
+/** Compatibilidade com itens antigos da fila: novas telas não usam upsert direto. */
+export async function upsertEntrega(e: PedidoEntrega, lojaId: string) {
+  if (e.status === 'pendente') {
+    await criarEntregaAtomica(e, e.codigoConfirmacao || '', lojaId);
+    return;
+  }
+  await transicionarEntregaAtomica(e.id, e.status, {
+    motivo: e.canceladoMotivo || e.naoEntregueMotivo,
+    recebedorNome: e.recebedorNome,
+    codigoConfirmacao: e.codigoConfirmacao,
+    comprovanteFotoUrl: e.comprovanteFotoUrl,
+    lat: e.comprovanteLat,
+    lng: e.comprovanteLng,
+    precisao: e.comprovantePrecisao,
+  });
+}
+
+export type LocalizacaoEntrega = {
+  id: string;
+  entregaId: string;
+  lat: number;
+  lng: number;
+  precisao?: number;
+};
+
+export async function atualizarLocalizacaoEntregador(localizacao: LocalizacaoEntrega, lojaId: string) {
+  void lojaId;
+  const { error } = await supabase.rpc('publicar_localizacao_entrega', {
+    p_entrega_id: localizacao.entregaId,
+    p_lat: localizacao.lat,
+    p_lng: localizacao.lng,
+    p_precisao_m: localizacao.precisao,
+    p_cliente_evento_id: localizacao.id,
+  });
+  check(error);
+}
+
+export async function listarEventosEntrega(entregaId: string): Promise<EntregaEvento[]> {
+  const { data, error } = await supabase.from('entrega_eventos')
+    .select('id,tipo,status_anterior,status_novo,detalhe,lat,lng,precisao_m,criado_em')
+    .eq('entrega_id', entregaId).order('criado_em', { ascending: true });
+  check(error);
+  return ((data ?? []) as Row[]).map(row => ({
+    id: Number(row.id), tipo: String(row.tipo), statusAnterior: row.status_anterior as string | undefined,
+    statusNovo: row.status_novo as string | undefined, detalhe: (row.detalhe ?? {}) as Record<string, unknown>,
+    lat: row.lat == null ? undefined : Number(row.lat), lng: row.lng == null ? undefined : Number(row.lng),
+    precisao: row.precisao_m == null ? undefined : Number(row.precisao_m), criadoEm: String(row.criado_em),
+  }));
+}
+
+export type ConfigEntrega = {
+  lojaId: string;
+  nomeLoja?: string;
+  enderecoOrigem?: string;
+  latitudeOrigem?: number;
+  longitudeOrigem?: number;
+  contextoGeocodificacao: string;
+  velocidadeMediaKmh: number;
+  slaMinutos: number;
+  precisaoMaximaM: number;
+  exigirPin: boolean;
+  exigirLocalizacao: boolean;
+  exigirFoto: boolean;
+};
+
+export async function carregarConfigEntrega(lojaId: string): Promise<ConfigEntrega> {
+  const { data, error } = await supabase.from('config_entregas').select('*').eq('loja_id', lojaId).maybeSingle();
+  check(error);
+  const row = (data ?? {}) as Row;
+  return {
+    lojaId, nomeLoja: row.nome_loja as string | undefined, enderecoOrigem: row.endereco_origem as string | undefined,
+    latitudeOrigem: row.latitude_origem == null ? undefined : Number(row.latitude_origem),
+    longitudeOrigem: row.longitude_origem == null ? undefined : Number(row.longitude_origem),
+    contextoGeocodificacao: String(row.contexto_geocodificacao ?? 'Brasil'),
+    velocidadeMediaKmh: Number(row.velocidade_media_kmh ?? 25), slaMinutos: Number(row.sla_minutos ?? 60),
+    precisaoMaximaM: Number(row.precisao_maxima_m ?? 150), exigirPin: row.exigir_pin !== false,
+    exigirLocalizacao: row.exigir_localizacao !== false, exigirFoto: Boolean(row.exigir_foto),
+  };
+}
+
+export async function salvarConfigEntrega(config: ConfigEntrega) {
+  const { error } = await supabase.from('config_entregas').upsert({
+    loja_id: config.lojaId, nome_loja: config.nomeLoja, endereco_origem: config.enderecoOrigem,
+    latitude_origem: config.latitudeOrigem, longitude_origem: config.longitudeOrigem,
+    contexto_geocodificacao: config.contextoGeocodificacao, velocidade_media_kmh: config.velocidadeMediaKmh,
+    sla_minutos: config.slaMinutos, precisao_maxima_m: config.precisaoMaximaM,
+    exigir_pin: config.exigirPin, exigir_localizacao: config.exigirLocalizacao,
+    exigir_foto: config.exigirFoto, updated_at: new Date().toISOString(),
+  });
+  check(error);
+}
+
+export async function geocodificarEntrega(endereco: string): Promise<{ lat: number; lng: number; distanciaKm?: number; etaMinutos?: number }> {
+  const { data, error } = await supabase.functions.invoke('geocodificar-entrega', { body: { endereco } });
+  check(error);
+  if (data?.error) throw new Error(String(data.error));
+  return {
+    lat: Number(data.lat), lng: Number(data.lng),
+    distanciaKm: data.distanciaKm == null ? undefined : Number(data.distanciaKm),
+    etaMinutos: data.etaMinutos == null ? undefined : Number(data.etaMinutos),
+  };
+}
+
+export async function uploadComprovanteEntrega(file: File, lojaId: string, entregaId: string) {
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new Error('Use uma imagem JPG, PNG ou WebP.');
+  if (file.size > 5 * 1024 * 1024) throw new Error('A foto deve ter no máximo 5 MB.');
+  const extensao = file.type === 'image/png' ? 'png' : file.type === 'image/webp' ? 'webp' : 'jpg';
+  const path = `${lojaId}/${entregaId}/${crypto.randomUUID()}.${extensao}`;
+  const { error } = await supabase.storage.from('entregas-comprovantes').upload(path, file, { contentType: file.type, upsert: false });
+  check(error);
+  return path;
+}
+
+export async function removerComprovanteEntrega(path: string) {
+  const { error } = await supabase.storage.from('entregas-comprovantes').remove([path]);
+  check(error);
+}
+
+export async function urlComprovanteEntrega(path: string) {
+  const { data, error } = await supabase.storage.from('entregas-comprovantes').createSignedUrl(path, 60 * 10);
+  check(error);
+  if (!data) throw new Error('Não foi possível abrir o comprovante.');
+  return data.signedUrl;
+}
+
+export async function acompanharEntregaPublica(token: string) {
+  const { data, error } = await supabase.rpc('acompanhar_entrega_publica', { p_token: token });
+  check(error);
+  if (!data) throw new Error('Entrega não encontrada ou link inválido.');
+  return data as Record<string, unknown>;
 }
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -278,8 +559,15 @@ export async function upsertPedidoCompra(p: PedidoCompra, lojaId: string) {
   check(itemError);
 }
 
+export async function receberPedidoCompraAtomico(id: string, lojaId: string) {
+  void lojaId;
+  const pedidoId = await normalizarIdPedidoCompra(id);
+  const { error } = await supabase.rpc('receber_pedido_compra_atomico', { p_pedido_id: pedidoId });
+  check(error);
+}
+
 type SyncOperation = (...args: never[]) => Promise<void>;
-const operations: Record<string, SyncOperation> = { upsertProduto, deleteProduto, insertMovimentacao, deleteMovimentacao, upsertCliente, deleteCliente, upsertCaixa, insertCaixaEntrada, insertVenda, confirmarVendaAtomica, upsertEntrega, upsertPedidoCompra };
+const operations: Record<string, SyncOperation> = { upsertProduto, deleteProduto, insertMovimentacao, deleteMovimentacao, upsertCliente, deleteCliente, upsertCaixa, insertCaixaEntrada, insertVenda, confirmarVendaAtomica, upsertEntrega, atualizarLocalizacaoEntregador, upsertPedidoCompra, receberPedidoCompraAtomico };
 
 async function executarFilaSync(): Promise<SyncQueueStatus> {
   const jobs = readQueue();
@@ -350,7 +638,7 @@ export function iniciarSincronizacaoAutomatica() {
   };
   const aoVisibilizar = () => { if (document.visibilityState === 'visible') tentarAgora(); };
   const aoAlterarStorage = (event: StorageEvent) => {
-    if (event.key === QUEUE_KEY) {
+    if (event.key === scopedKey('queue')) {
       window.dispatchEvent(new CustomEvent(SYNC_EVENT, { detail: getSyncQueueStatus() }));
       tentarAgora();
     }

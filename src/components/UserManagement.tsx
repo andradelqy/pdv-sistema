@@ -2,17 +2,26 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { toast } from '../lib/toast';
-import { Mail, User, Trash2 } from 'lucide-react';
+import { Mail, User } from 'lucide-react';
+
+type TeamMember = {
+  id: string;
+  email: string;
+  nome?: string;
+  role: 'owner' | 'gerente' | 'atendente' | 'entregador';
+  status: string;
+};
 
 export function UserManagement() {
-  const [users, setUsers] = useState<any[]>([]);
+  const [users, setUsers] = useState<TeamMember[]>([]);
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('atendente');
   const [loading, setLoading] = useState(false);
 
   const fetchUsers = async () => {
-    const { data } = await supabase.from('perfis').select('*');
-    if (data) setUsers(data);
+    const { data, error } = await supabase.from('perfis').select('id,email,nome,role,status').order('nome');
+    if (error) toast(`Erro ao carregar equipe: ${error.message}`, 'danger');
+    if (data) setUsers(data as TeamMember[]);
   };
 
   useEffect(() => { fetchUsers(); }, []);
@@ -27,8 +36,8 @@ export function UserManagement() {
       if (error) throw error;
       toast('Convite enviado com sucesso!');
       setEmail('');
-    } catch (e: any) {
-      toast('Erro ao convidar: ' + e.message, 'danger');
+    } catch (error: unknown) {
+      toast(`Erro ao convidar: ${error instanceof Error ? error.message : String(error)}`, 'danger');
     } finally {
       setLoading(false);
     }
@@ -60,7 +69,6 @@ export function UserManagement() {
               <th className="p-3 text-left">Usuário</th>
               <th className="p-3 text-left">Cargo</th>
               <th className="p-3 text-left">Status</th>
-              <th className="p-3">Ações</th>
             </tr>
           </thead>
           <tbody>
@@ -69,9 +77,6 @@ export function UserManagement() {
                 <td className="p-3 flex items-center gap-2"><User size={16}/> {u.email}</td>
                 <td className="p-3 capitalize">{u.role}</td>
                 <td className="p-3">{u.status}</td>
-                <td className="p-3 text-center">
-                  <button className="text-red-500 hover:text-red-700"><Trash2 size={16}/></button>
-                </td>
               </tr>
             ))}
           </tbody>

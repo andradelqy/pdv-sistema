@@ -1,0 +1,29 @@
+import { useEffect, useState } from 'react'
+import { LocateFixed, Save, Settings2, X } from 'lucide-react'
+import { useStore } from '../lib/store'
+import { carregarConfigEntrega, geocodificarEntrega, salvarConfigEntrega, type ConfigEntrega } from '../lib/sync'
+import { toast } from '../lib/toast'
+
+export function DeliverySettingsDialog({ onClose }: { onClose: () => void }) {
+  const lojaId = useStore(state => state.lojaId)
+  const [config, setConfig] = useState<ConfigEntrega | null>(null)
+  const [salvando, setSalvando] = useState(false)
+  const [localizando, setLocalizando] = useState(false)
+  useEffect(() => { void carregarConfigEntrega(lojaId).then(setConfig).catch(error => toast(error instanceof Error ? error.message : 'Falha ao carregar configuração.', 'danger')) }, [lojaId])
+  if (!config) return <div className="fixed inset-0 z-50 grid place-items-center bg-black/60"><div className="rounded-xl bg-card p-6">Carregando configuração…</div></div>
+  const localizar = async () => {
+    if (!config.enderecoOrigem?.trim()) return toast('Informe o endereço completo da loja.', 'warning')
+    setLocalizando(true)
+    try { const local = await geocodificarEntrega(config.enderecoOrigem); setConfig({ ...config, latitudeOrigem: local.lat, longitudeOrigem: local.lng }); toast('Endereço da loja localizado.', 'success') }
+    catch (error) { toast(error instanceof Error ? error.message : 'Não foi possível localizar.', 'danger') }
+    finally { setLocalizando(false) }
+  }
+  const salvar = async () => {
+    if (config.latitudeOrigem == null || config.longitudeOrigem == null) return toast('Localize o endereço da loja antes de salvar.', 'warning')
+    setSalvando(true)
+    try { await salvarConfigEntrega(config); toast('Configuração de entregas salva.', 'success'); onClose() }
+    catch (error) { toast(error instanceof Error ? error.message : 'Falha ao salvar.', 'danger') }
+    finally { setSalvando(false) }
+  }
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label="Configuração de entregas"><div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl border bg-card p-6 shadow-2xl space-y-5"><header className="flex items-start justify-between"><div><p className="flex items-center gap-2 text-xs font-bold text-primary"><Settings2 size={15} /> OPERAÇÃO</p><h2 className="text-xl font-bold">Configuração de entregas</h2><p className="text-sm text-muted-foreground">Origem, SLA e exigências do comprovante por loja.</p></div><button onClick={onClose} className="rounded-lg p-2 hover:bg-muted"><X size={18} /></button></header><div className="grid gap-3 sm:grid-cols-2"><label className="text-sm font-semibold sm:col-span-2">Nome da loja<input value={config.nomeLoja || ''} onChange={e => setConfig({ ...config, nomeLoja: e.target.value })} className="mt-1 w-full rounded-lg border bg-background p-2.5 font-normal" /></label><label className="text-sm font-semibold sm:col-span-2">Endereço de saída<input value={config.enderecoOrigem || ''} onChange={e => setConfig({ ...config, enderecoOrigem: e.target.value })} placeholder="Rua, número, bairro, cidade - UF" className="mt-1 w-full rounded-lg border bg-background p-2.5 font-normal" /></label><button onClick={() => void localizar()} disabled={localizando} className="sm:col-span-2 flex items-center justify-center gap-2 rounded-lg border p-2.5 text-sm font-semibold"><LocateFixed size={17} /> {localizando ? 'Localizando…' : 'Localizar endereço no mapa'}</button><label className="text-sm font-semibold">Latitude<input type="number" step="any" value={config.latitudeOrigem ?? ''} readOnly className="mt-1 w-full rounded-lg border bg-muted p-2.5 font-normal" /></label><label className="text-sm font-semibold">Longitude<input type="number" step="any" value={config.longitudeOrigem ?? ''} readOnly className="mt-1 w-full rounded-lg border bg-muted p-2.5 font-normal" /></label><label className="text-sm font-semibold sm:col-span-2">Contexto de busca<input value={config.contextoGeocodificacao} onChange={e => setConfig({ ...config, contextoGeocodificacao: e.target.value })} placeholder="São Paulo - SP, Brasil" className="mt-1 w-full rounded-lg border bg-background p-2.5 font-normal" /></label><label className="text-sm font-semibold">SLA padrão (min)<input type="number" min={10} max={1440} value={config.slaMinutos} onChange={e => setConfig({ ...config, slaMinutos: Number(e.target.value) })} className="mt-1 w-full rounded-lg border bg-background p-2.5 font-normal" /></label><label className="text-sm font-semibold">Velocidade estimada (km/h)<input type="number" min={5} max={120} value={config.velocidadeMediaKmh} onChange={e => setConfig({ ...config, velocidadeMediaKmh: Number(e.target.value) })} className="mt-1 w-full rounded-lg border bg-background p-2.5 font-normal" /></label><label className="text-sm font-semibold sm:col-span-2">Precisão máxima do GPS (m)<input type="number" min={10} max={1000} value={config.precisaoMaximaM} onChange={e => setConfig({ ...config, precisaoMaximaM: Number(e.target.value) })} className="mt-1 w-full rounded-lg border bg-background p-2.5 font-normal" /></label></div><div className="grid gap-2 rounded-xl border p-3 text-sm">{([['exigirPin','Exigir PIN do cliente'],['exigirLocalizacao','Exigir GPS no recebimento'],['exigirFoto','Exigir foto do comprovante']] as const).map(([campo,label]) => <label key={campo} className="flex items-center justify-between gap-3"><span>{label}</span><input type="checkbox" checked={config[campo]} onChange={e => setConfig({ ...config, [campo]: e.target.checked })} className="h-4 w-4" /></label>)}</div><button onClick={() => void salvar()} disabled={salvando} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary p-3 font-bold text-primary-foreground disabled:opacity-50"><Save size={17} /> {salvando ? 'Salvando…' : 'Salvar configuração'}</button></div></div>
+}

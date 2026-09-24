@@ -1,87 +1,52 @@
-import { LegalPage } from '../components/ui/LegalPage';
+import { LegalPage } from '../components/ui/LegalPage'
+import { canalDeContato, legalConfig } from '../config/legal'
 
 export function Termos() {
   return (
-    <LegalPage title="Termos de Serviço" lastUpdated="02/09/2026" icon="file">
+    <LegalPage title="Termos de Serviço" lastUpdated="23/09/2026" icon="file">
       <p>
-        Bem-vindo ao <strong>Órbita</strong>, um web app de gestão de inventário e vendas. Ao se cadastrar e utilizar nossos serviços, você concorda com os termos e condições abaixo.
+        Estes termos regulam o uso do <strong>Órbita</strong>, plataforma de gestão de vendas,
+        estoque, compras, clientes e entregas operada por <strong>{legalConfig.nomeOperador}</strong>
+        {legalConfig.documentoOperador ? `, documento ${legalConfig.documentoOperador}` : ''}.
       </p>
 
-      <h2>1. Aceitação dos Termos</h2>
-      <p>
-        Ao criar uma conta, acessar ou utilizar a plataforma <strong>Órbita</strong>, você declara ter lido, compreendido e aceitado integralmente estes Termos de Serviço. Se você não concordar com qualquer parte destes termos, não utilize nossa plataforma.
-      </p>
+      <h2>1. Aceitação e capacidade</h2>
+      <p>Ao usar o Órbita, o contratante declara possuir capacidade para representar o estabelecimento e aceita estes termos. Cada colaborador deve usar sua própria conta e manter suas credenciais protegidas.</p>
 
-      <h2>2. Descrição do Serviço</h2>
-      <p>
-        O Órbita é uma ferramenta digital de gestão empresarial que oferece funcionalidades de controle de estoque, registro de vendas, relatórios analíticos e gestão de clientes, acessível via web.
-      </p>
+      <h2>2. Serviço</h2>
+      <p>O Órbita apoia rotinas operacionais e gerenciais. Previsões, alertas e recomendações de compra são instrumentos de decisão e dependem da qualidade do cadastro e do histórico; não substituem conferência humana, contabilidade ou aconselhamento fiscal.</p>
 
-      <h2>3. Cadastro e Conta de Usuário</h2>
+      <h2>3. Responsabilidades do contratante</h2>
       <ul>
-        <li>Você é responsável por manter a confidencialidade de suas credenciais de acesso (e-mail e senha).</li>
-        <li>Você se compromete a fornecer informações verdadeiras, precisas e atualizadas durante o cadastro.</li>
-        <li>O Órbita reserva-se o direito de suspender ou encerrar contas que violem estes termos ou que contenham informações falsas.</li>
+        <li>Manter produtos, custos, estoques, usuários e permissões corretos.</li>
+        <li>Conferir pedidos, caixa, recebimentos e relatórios antes de decisões financeiras.</li>
+        <li>Obter base legal e consentimentos necessários para cadastrar clientes e enviar ofertas.</li>
+        <li>Não inserir números completos de cartão, CVV, senhas ou outros segredos no sistema.</li>
       </ul>
 
-      <h2>4. Planos de Assinatura e Pagamento</h2>
-      <ul>
-        <li><strong>Modelo de cobrança:</strong> O acesso às funcionalidades premium do Órbita é realizado mediante <strong>assinatura mensal ou anual</strong> (plano escolhido no momento da contratação).</li>
-        <li><strong>Ciclo de faturamento:</strong> O valor da assinatura será cobrado antecipadamente no primeiro dia de cada ciclo (mensal ou anual), de acordo com a forma de pagamento cadastrada (cartão de crédito, boleto ou PIX).</li>
-        <li><strong>Alterações de preço:</strong> Poderemos alterar o valor da assinatura a qualquer momento. Notificaremos você com antecedência mínima de 30 dias sobre qualquer mudança tarifária.</li>
-        <li><strong>Impostos:</strong> Você é responsável por todos os impostos aplicáveis incidentes sobre a assinatura.</li>
-      </ul>
+      <h2>4. Assinatura e pagamento</h2>
+      <p>A contratação e a cobrança são administradas manualmente pelo responsável comercial. Plano, valor, vencimento, período de teste e forma de pagamento são os informados na proposta ou contrato. O Órbita não realiza cobrança automática nem armazena dados de cartão nesta versão.</p>
 
-      <h2>5. Cancelamento e Reembolso</h2>
-      <ul>
-        <li><strong>Cancelamento:</strong> Você pode cancelar sua assinatura a qualquer momento através do painel de configurações da sua conta ou entrando em contato com nosso suporte.</li>
-        <li><strong>Efeito do cancelamento:</strong> O cancelamento vigora a partir do final do ciclo de faturamento atual. Você continuará tendo acesso ao plano até o término do período já pago. Não haverá reembolso proporcional por dias não utilizados.</li>
-        <li><strong>Política de reembolso:</strong> Oferecemos um período de <strong>teste gratuito de 7 dias</strong> (ou conforme estipulado na campanha vigente). Após a realização da primeira cobrança, <strong>não haverá reembolso</strong> total ou parcial, exceto em caso de falha comprovada do serviço que impeça seu uso por período superior a 72 horas consecutivas.</li>
-      </ul>
+      <h2>5. Cancelamento</h2>
+      <p>O cancelamento ou a não renovação deve ser solicitado por {canalDeContato(legalConfig.emailSuporte)}. Condições de aviso, acesso remanescente e eventual reembolso seguem a proposta comercial e a legislação aplicável.</p>
 
-      <h2>6. Propriedade Intelectual</h2>
-      <ul>
-        <li>Todo o conteúdo, design, código-fonte, logotipos, marcas e materiais disponíveis na plataforma Órbita são de propriedade exclusiva da nossa empresa ou de nossos licenciantes.</li>
-        <li>É proibida a reprodução, distribuição, cópia, engenharia reversa ou criação de obras derivadas baseadas no Órbita sem autorização prévia por escrito.</li>
-      </ul>
+      <h2>6. Disponibilidade, backup e suporte</h2>
+      <p>São adotadas medidas razoáveis de segurança e continuidade, mas nenhum serviço conectado é livre de indisponibilidades. O contratante deve comunicar inconsistências assim que percebê-las e manter os procedimentos operacionais de conferência e contingência acordados.</p>
 
-      <h2>7. Limitação de Responsabilidade</h2>
-      <ul>
-        <li>O Órbita é fornecido "no estado em que se encontra" ("as is"). Não garantimos que a plataforma estará livre de erros, falhas ou interrupções.</li>
-        <li>Em nenhuma hipótese a [Nome da Sua Empresa] será responsável por danos indiretos, incidentais, especiais ou consequenciais, incluindo perda de lucros ou dados, decorrentes do uso ou da impossibilidade de uso da plataforma.</li>
-      </ul>
+      <h2>7. Propriedade e uso permitido</h2>
+      <p>O software, a marca e os materiais do Órbita permanecem com seus titulares. É proibido tentar contornar controles de acesso, acessar dados de outra loja, distribuir cópias não autorizadas ou usar a plataforma para finalidade ilícita.</p>
 
-      <h2>8. Conduta Proibida</h2>
-      <p>Você concorda em não:</p>
-      <ul>
-        <li>Utilizar o Órbita para atividades ilegais ou fraudulentas.</li>
-        <li>Compartilhar sua senha ou credenciais com terceiros não autorizados.</li>
-        <li>Tentar acessar dados de outros usuários ou interferir na integridade da plataforma.</li>
-        <li>Utilizar robôs, spiders ou ferramentas automatizadas para extrair dados da plataforma (scraping).</li>
-      </ul>
+      <h2>8. Dados e encerramento</h2>
+      <p>Os dados operacionais inseridos pertencem ao contratante. Antes do encerramento, o contratante pode solicitar ou realizar a exportação disponível no sistema. A retenção e a eliminação observam obrigações legais, segurança e a Política de Privacidade.</p>
 
-      <h2>9. Suspensão e Rescisão</h2>
-      <p>Poderemos suspender ou encerrar sua conta imediatamente, sem aviso prévio, caso:</p>
-      <ul>
-        <li>Haja atraso no pagamento da assinatura por mais de 15 dias corridos.</li>
-        <li>Você viole gravemente quaisquer cláusulas destes Termos.</li>
-        <li>Determinado por ordem judicial ou regulatória.</li>
-      </ul>
+      <h2>9. Suspensão</h2>
+      <p>O acesso pode ser suspenso por inadimplência, risco de segurança, uso abusivo, ordem legal ou violação destes termos, com comunicação quando aplicável.</p>
 
-      <h2>10. Alterações nos Termos</h2>
-      <p>
-        Estes Termos de Serviço poderão ser atualizados periodicamente. A versão revisada entrará em vigor 15 dias após sua publicação em nosso site ou envio por e-mail. O uso contínuo da plataforma após esse prazo constitui aceitação das alterações.
-      </p>
+      <h2>10. Alterações e legislação</h2>
+      <p>Alterações materiais serão comunicadas por canal adequado. Aplicam-se as leis brasileiras, inclusive o Código de Defesa do Consumidor quando pertinente, sendo competente o foro definido pela legislação aplicável.</p>
 
-      <h2>11. Legislação Aplicável</h2>
-      <p>
-        Este contrato é regido pelas leis da República Federativa do Brasil. Fica eleito o foro da comarca de [Sua Cidade/Estado] para dirimir quaisquer questões judiciais decorrentes destes Termos.
-      </p>
-
-      <h2>12. Contato</h2>
-      <p>
-        Em caso de dúvidas sobre estes Termos, entre em contato conosco:<br />
-      </p>
+      <h2>11. Contato</h2>
+      <p>Questões contratuais ou de suporte devem ser enviadas para {canalDeContato(legalConfig.emailSuporte)}.</p>
     </LegalPage>
-  );
+  )
 }

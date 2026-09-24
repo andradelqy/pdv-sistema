@@ -4,12 +4,13 @@ import type { Session } from '@supabase/supabase-js';
 import {
   BarChart3, Bell, Boxes, ChartNoAxesCombined, Clock3, Database, Gauge, MapPinned,
   Menu, Moon, Package, ShoppingCart, Sun, Truck, Users, Wallet, LogOut, Loader2,
-  FileChartColumn, LockKeyhole
+  FileChartColumn, LockKeyhole, Megaphone
 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { useStore } from './lib/store';
-import { carregarTudo, getSyncQueueStatus, iniciarSincronizacaoAutomatica, subscribeSyncQueueStatus, type SyncQueueStatus } from './lib/sync';
+import { carregarTudo, configurarEscopoSync, getSyncQueueStatus, iniciarSincronizacaoAutomatica, subscribeSyncQueueStatus, type SyncQueueStatus } from './lib/sync';
 import { assinaturaEstaLiberada, dataDaAssinatura, type AssinaturaLoja } from './lib/assinatura';
+import { configurarContextoTelemetry, registrarErroAplicacao } from './lib/telemetry';
 import { ToastProvider } from './lib/toast';
 import { Login } from './Login';
 const Dashboard = lazy(() => import('./pages/Dashboard').then(module => ({ default: module.Dashboard })));
@@ -19,6 +20,7 @@ const Produtos = lazy(() => import('./pages/Produtos').then(module => ({ default
 const Movimentacoes = lazy(() => import('./pages/Movimentacoes').then(module => ({ default: module.Movimentacoes })));
 const Compras = lazy(() => import('./pages/Compras').then(module => ({ default: module.Compras })));
 const Clientes = lazy(() => import('./pages/Clientes').then(module => ({ default: module.Clientes })));
+const Ofertas = lazy(() => import('./pages/Ofertas').then(module => ({ default: module.Ofertas })));
 const Analises = lazy(() => import('./pages/Analises').then(module => ({ default: module.Analises })));
 const Relatorios = lazy(() => import('./pages/Relatorios').then(module => ({ default: module.Relatorios })));
 const PontoEletronico = lazy(() => import('./PontoEletronico').then(module => ({ default: module.PontoEletronico })));
@@ -26,14 +28,16 @@ const AppEntregador = lazy(() => import('./AppEntregador').then(module => ({ def
 const PainelMapa = lazy(() => import('./PainelMapa').then(module => ({ default: module.PainelMapa })));
 import { Termos } from './pages/Termos';
 import { Privacidade } from './pages/Privacidade';
+import { AcompanharEntrega } from './pages/AcompanharEntrega';
 
-type Page = 'dashboard' | 'pdv' | 'entregas_pdv' | 'ponto' | 'entregador' | 'mapa' | 'produtos' | 'movimentacoes' | 'compras' | 'clientes' | 'caixa' | 'relatorios' | 'historico' | 'abc' | 'qpr' | 'alertas' | 'backup';
+type Page = 'dashboard' | 'pdv' | 'entregas_pdv' | 'ponto' | 'entregador' | 'mapa' | 'produtos' | 'movimentacoes' | 'compras' | 'clientes' | 'ofertas' | 'caixa' | 'relatorios' | 'historico' | 'abc' | 'qpr' | 'alertas' | 'backup';
 
 const nav: { group: string; items: { page: Page; label: string; icon: typeof Gauge }[] }[] = [
   { group: 'Visão Geral', items: [{ page: 'dashboard', label: 'Dashboard', icon: Gauge }] },
   { group: 'Vendas', items: [{ page: 'pdv', label: 'PDV', icon: ShoppingCart }, { page: 'entregas_pdv', label: 'Entregas', icon: Truck }, { page: 'historico', label: 'Histórico', icon: Clock3 }] },
   { group: 'Estoque', items: [{ page: 'produtos', label: 'Produtos', icon: Package }, { page: 'movimentacoes', label: 'Movimentações', icon: Boxes }, { page: 'compras', label: 'Compras', icon: ShoppingCart }] },
   { group: 'Pessoas', items: [{ page: 'clientes', label: 'Clientes', icon: Users }, { page: 'ponto', label: 'Ponto Eletrônico', icon: Clock3 }] },
+  { group: 'Marketing', items: [{ page: 'ofertas', label: 'Ofertas e WhatsApp', icon: Megaphone }] },
   { group: 'Entregas', items: [{ page: 'entregador', label: 'App Entregador', icon: Truck }, { page: 'mapa', label: 'Rastreamento', icon: MapPinned }] },
   { group: 'Financeiro', items: [{ page: 'caixa', label: 'Caixa', icon: Wallet }, { page: 'relatorios', label: 'Relatórios', icon: FileChartColumn }] },
   { group: 'Análise', items: [{ page: 'abc', label: 'Curva ABC', icon: BarChart3 }, { page: 'qpr', label: 'Matriz QPR', icon: ChartNoAxesCombined }, { page: 'alertas', label: 'Alertas', icon: Bell }] },
@@ -41,14 +45,14 @@ const nav: { group: string; items: { page: Page; label: string; icon: typeof Gau
 ];
 
 const titles: Record<Page, string> = {
-  dashboard: 'Dashboard', pdv: 'Ponto de Venda', entregas_pdv: 'PDV Entregas', ponto: 'Ponto Eletrônico', entregador: 'App do Entregador', mapa: 'Rastreamento de Entregas', produtos: 'Produtos', movimentacoes: 'Movimentações', compras: 'Compras', clientes: 'Clientes', caixa: 'Caixa', relatorios: 'Relatórios', historico: 'Histórico de Vendas', abc: 'Curva ABC', qpr: 'Matriz QPR', alertas: 'Alertas', backup: 'Backup'
+  dashboard: 'Dashboard', pdv: 'Ponto de Venda', entregas_pdv: 'PDV Entregas', ponto: 'Ponto Eletrônico', entregador: 'App do Entregador', mapa: 'Rastreamento de Entregas', produtos: 'Produtos', movimentacoes: 'Movimentações', compras: 'Compras', clientes: 'Clientes', ofertas: 'Central de Ofertas', caixa: 'Caixa', relatorios: 'Relatórios', historico: 'Histórico de Vendas', abc: 'Curva ABC', qpr: 'Matriz QPR', alertas: 'Alertas', backup: 'Backup'
 };
 
 const paginasPorPapel: Record<'owner' | 'gerente' | 'atendente' | 'entregador', Page[]> = {
   owner: nav.flatMap(group => group.items.map(item => item.page)),
   gerente: nav.flatMap(group => group.items.map(item => item.page)),
   atendente: ['pdv', 'entregas_pdv', 'historico', 'clientes'],
-  entregador: ['entregador', 'mapa'],
+  entregador: ['entregador'],
 };
 
 function paginaInicialDoPapel(role?: keyof typeof paginasPorPapel): Page {
@@ -115,7 +119,7 @@ function Sidebar({
         <div className={`flex items-center gap-2 h-16 px-4 border-b flex-shrink-0 ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
           <OrbitaMark />
           <span className={`font-bold text-lg tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>Órbita</span>
-          <span className={`text-[10px] font-mono ml-auto ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>versão 2.0</span>
+          <span className={`text-[10px] font-mono ml-auto ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>versão {__APP_VERSION__}</span>
         </div>
 
         {/* Navegação com scroll suave e invisível */}
@@ -373,6 +377,8 @@ function AppContent() {
       if (!ativo) return;
       setSession(value);
       if (!value) {
+        configurarEscopoSync(null, null);
+        configurarContextoTelemetry({});
         setAcesso(null);
         setVerificandoSessao(false);
         return;
@@ -387,6 +393,9 @@ function AppContent() {
           .single();
         if (perfilError || !perfil?.loja_id) throw new Error(perfilError?.message || 'Perfil sem loja_id configurado.');
 
+        configurarEscopoSync(perfil.loja_id, value.user.id);
+        configurarContextoTelemetry({ lojaId: perfil.loja_id, userId: value.user.id });
+
         const estadoAcesso = await consultarAcessoDaLoja(perfil.loja_id);
         if (!ativo) return;
         setAcesso(estadoAcesso);
@@ -396,11 +405,16 @@ function AppContent() {
           id: value.user.id,
           nome: perfil.nome || perfil.email || value.user.email || 'Usuário',
         });
-        const remoto = await carregarTudo(perfil.loja_id);
+        const remoto = await carregarTudo(perfil.loja_id, perfil.role);
         if (ativo) hydrateFromRemote(remoto);
       } catch (error) {
         const mensagem = error instanceof Error ? error.message : 'Não foi possível validar o acesso desta loja.';
         console.error('Falha ao carregar remoto:', error);
+        void registrarErroAplicacao({
+          origem: 'app.carregar-sessao',
+          mensagem,
+          stack: error instanceof Error ? error.stack : undefined,
+        });
         if (ativo) setAcesso({ liberado: false, erro: mensagem });
       } finally {
         if (ativo) setVerificandoSessao(false);
@@ -431,6 +445,11 @@ function AppContent() {
         if (!estado.liberado) setAcesso(estado);
       } catch (error) {
         console.error('Falha ao revalidar assinatura:', error);
+        void registrarErroAplicacao({
+          origem: 'app.revalidar-assinatura',
+          mensagem: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
       }
     };
     const intervalo = window.setInterval(() => void revalidar(), 60_000);
@@ -477,6 +496,7 @@ function AppContent() {
     movimentacoes: <Movimentacoes />,
     compras: <Compras />,
     clientes: <Clientes />,
+    ofertas: <Ofertas />,
     ponto: <PontoEletronico />,
     entregador: <AppEntregador />,
     mapa: <PainelMapa />,
@@ -528,6 +548,7 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/termos" element={<Termos />} />
         <Route path="/privacidade" element={<Privacidade />} />
+        <Route path="/acompanhar/:token" element={<AcompanharEntrega />} />
         <Route path="/*" element={<AppContent />} />
       </Routes>
     </BrowserRouter>

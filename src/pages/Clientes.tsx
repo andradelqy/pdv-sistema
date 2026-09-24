@@ -4,7 +4,7 @@ import { toast } from '../lib/toast'
 import { Plus, Pencil, Trash2, Search, MessageCircle, Check, DollarSign } from 'lucide-react'
 import { segmentarCliente } from '../lib/analytics'
 
-const EMPTY: Omit<Cliente, 'id'> = { nome: '', telefone: '', email: '', tags: [], observacoes: '', limite: 100, saldo: 0, compras: 0 }
+const EMPTY: Omit<Cliente, 'id'> = { nome: '', telefone: '', email: '', tags: [], observacoes: '', limite: 100, saldo: 0, compras: 0, whatsappOptIn: false }
 
 export function Clientes() {
   const { clientes, vendas, addCliente, updateCliente, deleteCliente, quitarFiado } = useStore()
@@ -217,6 +217,23 @@ export function Clientes() {
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Observações</label>
                 <textarea className="w-full p-2 border border-border rounded-lg bg-background" value={(form as Cliente).observacoes || ''} onChange={e => setForm(f => ({ ...f, observacoes: e.target.value }))}/>
               </div>
+              <label className="flex items-start gap-3 rounded-xl border border-border bg-muted/30 p-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 accent-emerald-600"
+                  checked={Boolean((form as Cliente).whatsappOptIn)}
+                  onChange={e => setForm(f => ({
+                    ...f,
+                    whatsappOptIn: e.target.checked,
+                    whatsappOptInEm: e.target.checked ? new Date().toISOString() : undefined,
+                    whatsappOptOutEm: e.target.checked ? undefined : new Date().toISOString(),
+                  }))}
+                />
+                <span>
+                  <strong className="block text-sm">Aceita ofertas pelo WhatsApp</strong>
+                  <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">Marque somente após o cliente autorizar mensagens promocionais. Ele poderá cancelar a qualquer momento.</span>
+                </span>
+              </label>
             </div>
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => setModal(false)} className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted">Cancelar</button>
