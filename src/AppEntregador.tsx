@@ -48,6 +48,162 @@ function EtapasEntrega({ entrega }: { entrega: PedidoEntrega }) {
   </div>
 }
 
+const pinInputStyles = `
+  @property --pin-sweep {
+    syntax: '<angle>';
+    initial-value: 0deg;
+    inherits: false;
+  }
+
+  .pin-box {
+    --pin-sweep: 0deg;
+    border: 2px solid transparent;
+    border-radius: 1rem;
+    background:
+      linear-gradient(#ffffff, #ffffff) padding-box,
+      conic-gradient(#d1d5db 0deg, #d1d5db 360deg) border-box;
+    transition: box-shadow 200ms ease;
+  }
+
+  .pin-box:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.10);
+  }
+
+  .pin-box.pin-filled {
+    background:
+      linear-gradient(#ffffff, #ffffff) padding-box,
+      conic-gradient(
+        #10b981 0deg,
+        #10b981 var(--pin-sweep),
+        #d1d5db var(--pin-sweep),
+        #d1d5db 360deg
+      ) border-box;
+    animation: pin-activate 700ms cubic-bezier(0.22, 1, 0.36, 1) 1 forwards;
+    box-shadow:
+      0 0 0 1px rgba(16, 185, 129, 0.18),
+      0 0 14px rgba(16, 185, 129, 0.30);
+  }
+
+  @keyframes pin-activate {
+    0% {
+      --pin-sweep: 0deg;
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.10);
+    }
+    55% {
+      box-shadow:
+        0 0 0 4px rgba(16, 185, 129, 0.22),
+        0 0 18px rgba(16, 185, 129, 0.38);
+    }
+    100% {
+      --pin-sweep: 360deg;
+      box-shadow:
+        0 0 0 1px rgba(16, 185, 129, 0.18),
+        0 0 14px rgba(16, 185, 129, 0.30);
+    }
+  }
+`
+
+function PinInput({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string
+  onChange: (v: string) => void
+  disabled?: boolean
+}) {
+  const refs = useRef<Array<HTMLInputElement | null>>([])
+  const digits = value.padEnd(4, ' ').slice(0, 4).split('')
+
+  const setDigits = (chars: string[]) => {
+    onChange(chars.join('').replace(/\s/g, '').slice(0, 4))
+  }
+
+  const handleChange = (index: number, raw: string) => {
+    const nums = raw.replace(/\D/g, '')
+    const chars = digits.slice()
+
+    if (!nums) {
+      chars[index] = ' '
+      setDigits(chars)
+      return
+    }
+
+    for (let i = 0; i < nums.length && index + i < 4; i++) {
+      chars[index + i] = nums[i]
+    }
+    setDigits(chars)
+
+    const next = Math.min(index + nums.length, 3)
+    refs.current[next]?.focus()
+    refs.current[next]?.select()
+  }
+
+  const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace') {
+      e.preventDefault()
+      const chars = digits.slice()
+      if (chars[index] && chars[index] !== ' ') {
+        chars[index] = ' '
+      } else if (index > 0) {
+        chars[index - 1] = ' '
+        refs.current[index - 1]?.focus()
+      }
+      setDigits(chars)
+    } else if (e.key === 'ArrowLeft' && index > 0) {
+      refs.current[index - 1]?.focus()
+    } else if (e.key === 'ArrowRight' && index < 3) {
+      refs.current[index + 1]?.focus()
+    } else if (e.key === 'Delete') {
+      const chars = digits.slice()
+      chars[index] = ' '
+      setDigits(chars)
+    }
+  }
+
+  const handlePaste = (index: number, e: React.ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData('text').replace(/\D/g, '')
+    if (!text) return
+    e.preventDefault()
+    const chars = digits.slice()
+    for (let i = 0; i < text.length && index + i < 4; i++) {
+      chars[index + i] = text[i]
+    }
+    setDigits(chars)
+    const next = Math.min(index + text.length, 3)
+    refs.current[next]?.focus()
+  }
+
+  return (
+    <>
+      <style>{pinInputStyles}</style>
+      <div className="flex w-full gap-2.5">
+        {[0, 1, 2, 3].map(i => {
+          const filled = Boolean(digits[i]?.trim())
+          return (
+            <input
+              key={i}
+              ref={el => { refs.current[i] = el }}
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={1}
+              disabled={disabled}
+              value={digits[i]?.trim() || ''}
+              onChange={e => handleChange(i, e.target.value)}
+              onKeyDown={e => handleKeyDown(i, e)}
+              onPaste={e => handlePaste(i, e)}
+              onFocus={e => e.target.select()}
+              className={`pin-box h-14 min-w-0 flex-1 bg-transparent text-center text-2xl font-bold text-neutral-900 outline-none disabled:opacity-50 ${filled ? 'pin-filled' : ''}`}
+            />
+          )
+        })}
+      </div>
+    </>
+  )
+}
+
 export function AppEntregador() {
   const { entregas, updateStatusEntrega, sincronizarEntregas, currentUser, currentRole, lojaId, setRole } = useStore()
   const [perfilErro, setPerfilErro] = useState<string | null>(null)
@@ -201,7 +357,16 @@ export function AppEntregador() {
         <EtapasEntrega entrega={entregaEmRota} />
         <div className="grid grid-cols-2 gap-2"><button onClick={() => abrirNavegacao(entregaEmRota, 'google')} className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 p-3 text-sm font-bold text-white"><Navigation size={17} /> Google Maps</button><button onClick={() => abrirNavegacao(entregaEmRota, 'waze')} className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-500 p-3 text-sm font-bold text-white"><Route size={17} /> Waze</button>{entregaEmRota.telefone && <><a href={`tel:${entregaEmRota.telefone}`} className="inline-flex items-center justify-center gap-2 rounded-xl border p-3 text-sm font-semibold"><Phone size={17} /> Ligar</a><a href={`https://wa.me/${telefoneNumerico(entregaEmRota.telefone)}`} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-xl border p-3 text-sm font-semibold"><MessageCircle size={17} /> WhatsApp</a></>}</div>
         <div className="rounded-xl bg-muted/50 p-3 text-sm"><div className="flex justify-between"><span>Pagamento</span><b className="capitalize">{entregaEmRota.pagamento.replaceAll('_', ' ')}</b></div><div className="mt-1 flex justify-between"><span>Total</span><b>{fmtR(entregaEmRota.total)}</b></div><div className="mt-3 border-t pt-2 space-y-1">{entregaEmRota.itens.map(item => <div key={item.produtoId} className="flex justify-between text-xs"><span>{item.produtoNome || 'Produto'}</span><b>{item.quantidade} un.</b></div>)}</div>{entregaEmRota.obs && <p className="mt-2 border-t pt-2 text-xs text-muted-foreground">Obs.: {entregaEmRota.obs}</p>}</div>
-        <div className="space-y-2 rounded-xl border p-3"><div className="flex items-center gap-2 font-bold"><ShieldCheck className="text-emerald-600" size={18} /> Comprovante de entrega</div><input value={recebedor} onChange={e => setRecebedor(e.target.value)} placeholder="Nome de quem recebeu *" className="w-full rounded-lg border bg-background p-3" /><input inputMode="numeric" maxLength={4} value={codigo} onChange={e => setCodigo(e.target.value.replace(/\D/g, ''))} placeholder={config?.exigirPin === false ? 'PIN do cliente (opcional)' : 'PIN de 4 dígitos do cliente *'} className="w-full rounded-lg border bg-background p-3 tracking-[0.3em]" /><label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed p-3 text-sm"><Camera size={17} /> {foto ? foto.name : config?.exigirFoto ? 'Fotografar comprovante *' : 'Adicionar foto (opcional)'}<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" onChange={e => setFoto(e.target.files?.[0] || null)} /></label><button disabled={processando === entregaEmRota.id} onClick={() => void concluirEntrega(entregaEmRota)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 p-3 font-bold text-white disabled:opacity-50"><CheckCircle2 size={18} /> {processando === entregaEmRota.id ? 'Validando e concluindo…' : 'Confirmar entrega'}</button></div>
+        <div className="space-y-2 rounded-xl border p-3"><div className="flex items-center gap-2 font-bold"><ShieldCheck className="text-emerald-600" size={18} /> Comprovante de entrega</div><input value={recebedor} onChange={e => setRecebedor(e.target.value)} placeholder="Nome de quem recebeu *" className="w-full rounded-lg border bg-background p-3" /><div className="space-y-2">
+          <p className="text-center text-xs font-medium text-muted-foreground">
+            {config?.exigirPin === false ? 'PIN do cliente (opcional)' : 'PIN de 4 dígitos do cliente *'}
+          </p>
+          <PinInput
+            value={codigo}
+            onChange={setCodigo}
+            disabled={processando === entregaEmRota.id}
+          />
+        </div><label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed p-3 text-sm"><Camera size={17} /> {foto ? foto.name : config?.exigirFoto ? 'Fotografar comprovante *' : 'Adicionar foto (opcional)'}<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" onChange={e => setFoto(e.target.files?.[0] || null)} /></label><button disabled={processando === entregaEmRota.id} onClick={() => void concluirEntrega(entregaEmRota)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 p-3 font-bold text-white disabled:opacity-50"><CheckCircle2 size={18} /> {processando === entregaEmRota.id ? 'Validando e concluindo…' : 'Confirmar entrega'}</button></div>
         <div className="space-y-2 rounded-xl border border-rose-200 p-3"><p className="text-sm font-semibold text-rose-700 dark:text-rose-300">Não foi possível entregar?</p><input value={motivo} onChange={e => setMotivo(e.target.value)} placeholder="Informe o motivo obrigatório" className="w-full rounded-lg border bg-background p-3" /><button disabled={!motivo.trim() || processando === entregaEmRota.id} onClick={() => { void executarStatus(entregaEmRota, 'nao_entregue', { motivo: motivo.trim(), lat: currentPos?.lat, lng: currentPos?.lng, precisao: currentPos?.precisao }).then(() => setMotivo('')) }} className="w-full rounded-lg border border-rose-500 p-2 font-semibold text-rose-600 disabled:opacity-50">Registrar tentativa sem sucesso</button></div>
       </div>
     </section>}
