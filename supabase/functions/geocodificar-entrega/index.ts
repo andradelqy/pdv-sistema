@@ -21,20 +21,34 @@ export default {
     if (!perfil?.loja_id || !["owner", "gerente", "atendente"].includes(perfil.role)) {
       return Response.json({ error: "Usuário sem permissão para calcular a entrega." }, { status: 403 });
     }
-    const payload = await req.json().catch(() => ({})) as { endereco?: string };
+    const payload = await req.json().catch(() => ({})) as { endereco?: string; contexto?: string };
     const endereco = payload.endereco?.trim();
     if (!endereco || endereco.length < 5 || endereco.length > 300) {
       return Response.json({ error: "Informe um endereço válido." }, { status: 400 });
     }
-    const chave = normalizar(endereco);
-    const [{ data: config }, { data: cache }] = await Promise.all([
-      ctx.supabase.from("config_entregas").select("latitude_origem,longitude_origem,contexto_geocodificacao,velocidade_media_kmh").eq("loja_id", perfil.loja_id).maybeSingle(),
-      ctx.supabase.from("geocodificacao_cache").select("lat,lng,atualizado_em").eq("loja_id", perfil.loja_id).eq("endereco_normalizado", chave).maybeSingle(),
-    ]);
+    const { data: config, error: configError } = await ctx.supabase
+      .from("config_entregas")
+      .select("latitude_origem,longitude_origem,contexto_geocodificacao,velocidade_media_kmh")
+      .eq("loja_id", perfil.loja_id)
+      .maybeSingle();
+    if (configError) return Response.json({ error: "Não foi possível ler a configuração desta loja." }, { status: 500 });
+
+    const contextoInformado = payload.contexto?.trim();
+    if (contextoInformado && contextoInformado.length > 160) {
+      return Response.json({ error: "O contexto de busca é muito longo." }, { status: 400 });
+    }
+    const contexto = contextoInformado || String(config?.contexto_geocodificacao || "Brasil");
+    const chave = normalizar(`${endereco} | ${contexto}`);
+    const { data: cache, error: cacheError } = await ctx.supabase
+      .from("geocodificacao_cache")
+      .select("lat,lng,atualizado_em")
+      .eq("loja_id", perfil.loja_id)
+      .eq("endereco_normalizado", chave)
+      .maybeSingle();
+    if (cacheError) return Response.json({ error: "Não foi possível consultar o cache de endereços." }, { status: 500 });
     let lat = cache ? Number(cache.lat) : NaN;
     let lng = cache ? Number(cache.lng) : NaN;
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      const contexto = String(config?.contexto_geocodificacao || "Brasil");
       const query = new URLSearchParams({ format: "jsonv2", q: `${endereco}, ${contexto}`, countrycodes: "br", limit: "1" });
       const appContact = Deno.env.get("GEOCODING_CONTACT") || "suporte@orbita.app";
       const response = await fetch(`https://nominatim.openstreetmap.org/search?${query}`, {
@@ -42,17 +56,25 @@ export default {
       });
       if (!response.ok) return Response.json({ error: "O serviço de endereços está indisponível." }, { status: 503 });
       const result = await response.json() as Array<{ lat: string; lon: string; display_name?: string }>;
-      if (!result.length) return Response.json({ error: "Endereço não encontrado. Complete rua, número, bairro e cidade." }, { status: 404 });
+      if (!result.length) return Response.json({ error: `Endereço não encontrado em ${contexto}. Complete rua, número, bairro e cidade.` }, { status: 404 });
       lat = Number(result[0].lat);
       lng = Number(result[0].lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        return Response.json({ error: "O provedor retornou coordenadas inválidas." }, { status: 502 });
+      }
       await ctx.supabaseAdmin.from("geocodificacao_cache").upsert({
         loja_id: perfil.loja_id, endereco_normalizado: chave, lat, lng, provedor: "nominatim", atualizado_em: new Date().toISOString(),
       });
+      const origemLat = Number(config?.latitude_origem);
+      const origemLng = Number(config?.longitude_origem);
+      const km = Number.isFinite(origemLat) && Number.isFinite(origemLng) ? Math.max(0.5, distanciaKm(origemLat, origemLng, lat, lng)) : null;
+      const velocidade = Math.max(5, Number(config?.velocidade_media_kmh || 25));
+      return Response.json({ lat, lng, enderecoEncontrado: result[0].display_name, distanciaKm: km == null ? null : Number(km.toFixed(1)), etaMinutos: km == null ? null : Math.ceil(km / velocidade * 60 + 5), cache: false });
     }
     const origemLat = Number(config?.latitude_origem);
     const origemLng = Number(config?.longitude_origem);
     const km = Number.isFinite(origemLat) && Number.isFinite(origemLng) ? Math.max(0.5, distanciaKm(origemLat, origemLng, lat, lng)) : null;
     const velocidade = Math.max(5, Number(config?.velocidade_media_kmh || 25));
-    return Response.json({ lat, lng, distanciaKm: km == null ? null : Number(km.toFixed(1)), etaMinutos: km == null ? null : Math.ceil(km / velocidade * 60 + 5), cache: Boolean(cache) });
+    return Response.json({ lat, lng, distanciaKm: km == null ? null : Number(km.toFixed(1)), etaMinutos: km == null ? null : Math.ceil(km / velocidade * 60 + 5), cache: true });
   }),
 };

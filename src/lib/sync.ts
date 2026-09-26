@@ -1,7 +1,9 @@
 import { supabase } from './supabase';
+import { FunctionsFetchError, FunctionsHttpError, FunctionsRelayError } from '@supabase/supabase-js';
 import type { Caixa, Cliente, EntradaCaixa, ItemVenda, Movimentacao, PedidoCompra, PedidoEntrega, Produto, Venda } from './store';
 import { ordenarVendasRecentes } from './sales';
 import { dataISOValidaOuHoje, dataISOValidaOuNula, timestampISOValidoOuAgora, timestampISOValidoOuNulo } from './dates';
+import { validarCoordenadas } from './geo';
 
 type Row = Record<string, unknown>;
 
@@ -453,6 +455,8 @@ export async function carregarConfigEntrega(lojaId: string): Promise<ConfigEntre
 }
 
 export async function salvarConfigEntrega(config: ConfigEntrega) {
+  const erroCoordenadas = validarCoordenadas(config.latitudeOrigem, config.longitudeOrigem);
+  if (erroCoordenadas) throw new Error(erroCoordenadas);
   const { error } = await supabase.from('config_entregas').upsert({
     loja_id: config.lojaId, nome_loja: config.nomeLoja, endereco_origem: config.enderecoOrigem,
     latitude_origem: config.latitudeOrigem, longitude_origem: config.longitudeOrigem,
@@ -464,14 +468,25 @@ export async function salvarConfigEntrega(config: ConfigEntrega) {
   check(error);
 }
 
-export async function geocodificarEntrega(endereco: string): Promise<{ lat: number; lng: number; distanciaKm?: number; etaMinutos?: number }> {
-  const { data, error } = await supabase.functions.invoke('geocodificar-entrega', { body: { endereco } });
+export async function geocodificarEntrega(endereco: string, contexto?: string): Promise<{ lat: number; lng: number; distanciaKm?: number; etaMinutos?: number; enderecoEncontrado?: string }> {
+  const { data, error } = await supabase.functions.invoke('geocodificar-entrega', { body: { endereco, contexto } });
+  if (error instanceof FunctionsHttpError) {
+    const resposta = await error.context.clone().json().catch(() => null) as { error?: string } | null;
+    throw new Error(resposta?.error || `O serviço de endereços recusou a busca (${error.context.status}).`);
+  }
+  if (error instanceof FunctionsRelayError) throw new Error('A função de localização está temporariamente indisponível.');
+  if (error instanceof FunctionsFetchError) throw new Error('Não foi possível conectar ao serviço de localização. Verifique sua internet.');
   check(error);
   if (data?.error) throw new Error(String(data.error));
+  const lat = Number(data?.lat);
+  const lng = Number(data?.lng);
+  const erroCoordenadas = validarCoordenadas(lat, lng);
+  if (erroCoordenadas) throw new Error('O serviço não retornou coordenadas válidas. Tente completar o endereço ou informe-as manualmente.');
   return {
-    lat: Number(data.lat), lng: Number(data.lng),
+    lat, lng,
     distanciaKm: data.distanciaKm == null ? undefined : Number(data.distanciaKm),
     etaMinutos: data.etaMinutos == null ? undefined : Number(data.etaMinutos),
+    enderecoEncontrado: data.enderecoEncontrado == null ? undefined : String(data.enderecoEncontrado),
   };
 }
 
