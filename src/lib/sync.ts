@@ -424,6 +424,13 @@ export async function listarEventosEntrega(entregaId: string): Promise<EntregaEv
   }));
 }
 
+export async function obterCodigoClienteEntrega(entregaId: string): Promise<string | null> {
+  const { data, error } = await supabase.rpc('obter_codigo_cliente_entrega', { p_entrega_id: entregaId });
+  check(error);
+  const codigo = data == null ? null : String(data);
+  return codigo && /^\d{4}$/.test(codigo) ? codigo : null;
+}
+
 export type ConfigEntrega = {
   lojaId: string;
   nomeLoja?: string;
@@ -468,15 +475,42 @@ export async function salvarConfigEntrega(config: ConfigEntrega) {
   check(error);
 }
 
+async function mensagemErroFuncao(error: unknown) {
+  const contexto = typeof error === 'object' && error !== null && 'context' in error
+    ? (error as { context?: unknown }).context
+    : null;
+
+  const respostaHttp = typeof contexto === 'object' && contexto !== null
+    && 'clone' in contexto && typeof (contexto as { clone?: unknown }).clone === 'function'
+    && 'status' in contexto
+    ? contexto as { clone: () => Response; status: number }
+    : null;
+  if (respostaHttp) {
+    const corpo = await respostaHttp.clone().text().catch(() => '');
+    if (corpo) {
+      try {
+        const resposta = JSON.parse(corpo) as { error?: unknown; message?: unknown };
+        const mensagem = resposta.error ?? resposta.message;
+        if (typeof mensagem === 'string' && mensagem.trim()) return mensagem.trim();
+      } catch {
+        if (corpo.trim() && !corpo.trim().startsWith('<')) return corpo.trim();
+      }
+    }
+    return `O serviço de endereços recusou a busca (${respostaHttp.status}).`;
+  }
+
+  if (error instanceof FunctionsRelayError) return 'A função de localização está temporariamente indisponível.';
+  if (error instanceof FunctionsFetchError) return 'Não foi possível conectar ao serviço de localização. Verifique sua internet.';
+  if (error instanceof FunctionsHttpError) return 'O serviço de endereços recusou a busca.';
+  if (error instanceof Error && error.message && error.message !== 'Edge Function returned a non-2xx status code') {
+    return error.message;
+  }
+  return 'Não foi possível localizar o endereço. Tente novamente em instantes.';
+}
+
 export async function geocodificarEntrega(endereco: string, contexto?: string): Promise<{ lat: number; lng: number; distanciaKm?: number; etaMinutos?: number; enderecoEncontrado?: string }> {
   const { data, error } = await supabase.functions.invoke('geocodificar-entrega', { body: { endereco, contexto } });
-  if (error instanceof FunctionsHttpError) {
-    const resposta = await error.context.clone().json().catch(() => null) as { error?: string } | null;
-    throw new Error(resposta?.error || `O serviço de endereços recusou a busca (${error.context.status}).`);
-  }
-  if (error instanceof FunctionsRelayError) throw new Error('A função de localização está temporariamente indisponível.');
-  if (error instanceof FunctionsFetchError) throw new Error('Não foi possível conectar ao serviço de localização. Verifique sua internet.');
-  check(error);
+  if (error) throw new Error(await mensagemErroFuncao(error));
   if (data?.error) throw new Error(String(data.error));
   const lat = Number(data?.lat);
   const lng = Number(data?.lng);

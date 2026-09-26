@@ -10,6 +10,7 @@ type Acompanhamento = {
   id: string
   loja: string
   status: 'pendente' | 'aceito' | 'em_rota' | 'entregue' | 'cancelado' | 'nao_entregue'
+  codigo_confirmacao?: string
   criado_em: string
   aceito_em?: string
   em_rota_em?: string
@@ -62,6 +63,8 @@ export function AcompanharEntrega() {
         <div className="mb-5 flex items-center gap-3"><div className="grid h-12 w-12 place-items-center rounded-2xl bg-cyan-500/15 text-cyan-300">{finalizada ? <CheckCircle2 /> : dados.status === 'em_rota' ? <Route /> : <PackageCheck />}</div><div><h2 className="font-bold">{rotulos[dados.status]}</h2>{dados.previsao_entrega_em && !finalizada && <p className="flex items-center gap-1 text-sm text-slate-400"><Clock3 size={14} /> Previsão até {new Date(dados.previsao_entrega_em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</p>}</div></div>
         <div className="space-y-0">{ordem.map((status, index) => { const concluida = atual >= index || finalizada; return <div key={status} className="flex gap-3"><div className="flex flex-col items-center"><div className={`grid h-7 w-7 place-items-center rounded-full border text-xs ${concluida ? 'border-cyan-400 bg-cyan-400 text-slate-950' : 'border-slate-600 text-slate-500'}`}>{concluida ? '✓' : index + 1}</div>{index < ordem.length - 1 && <div className={`h-8 w-px ${atual > index ? 'bg-cyan-400' : 'bg-slate-700'}`} />}</div><p className={`pt-1 text-sm ${concluida ? 'font-semibold' : 'text-slate-500'}`}>{rotulos[status]}</p></div> })}</div>
       </section>
+
+      {dados.codigo_confirmacao && <section className="rounded-3xl border border-cyan-400/30 bg-cyan-400/10 p-5 text-center shadow-lg shadow-cyan-950/20"><ShieldCheck className="mx-auto text-cyan-300" size={28} /><p className="mt-2 text-xs font-bold uppercase tracking-widest text-cyan-300">Código de recebimento</p><p className="mt-2 font-mono text-4xl font-black tracking-[0.4em] text-white">{dados.codigo_confirmacao}</p><p className="mt-3 text-sm text-slate-300">Informe este código ao responsável somente quando receber seu pedido.</p></section>}
 
       {posicao && <section className="overflow-hidden rounded-3xl border border-white/10 bg-white/5"><div className="flex items-center justify-between p-4"><div><h2 className="font-bold">Localização do entregador</h2><p className="text-xs text-slate-400">{dados.entregador ? `${dados.entregador} · ` : ''}{dados.localizacao_atualizada_em ? `Atualizado às ${new Date(dados.localizacao_atualizada_em).toLocaleTimeString('pt-BR')}` : 'Atualizando…'}</p></div><MapPin className="text-cyan-400" /></div><div className="h-72"><MapContainer center={posicao} zoom={15} style={{ height: '100%', width: '100%' }}><TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" /><Marker position={posicao} icon={motoIcon} /></MapContainer></div></section>}
       {!posicao && dados.status !== 'entregue' && <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-center text-sm text-slate-400">O mapa aparece quando o pedido sair para entrega.</div>}
