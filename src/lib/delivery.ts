@@ -14,6 +14,13 @@ export type RotaEntrega = {
   pontos: [number, number][]
 }
 
+export type PapelOperadorEntrega = 'owner' | 'gerente' | 'entregador'
+
+/** Papéis autorizados a assumir pessoalmente e executar uma entrega. */
+export function podeOperarEntrega(papel?: string | null): papel is PapelOperadorEntrega {
+  return papel === 'owner' || papel === 'gerente' || papel === 'entregador'
+}
+
 /**
  * Mantém cada pedido em sua própria linha e descarta pontos cuja precisão ou
  * velocidade implícita indicam salto de GPS.

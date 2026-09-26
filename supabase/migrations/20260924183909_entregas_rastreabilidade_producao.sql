@@ -327,8 +327,8 @@ begin
     v_id,v_usuario,v_loja,nullif(p_entrega ->> 'cliente_id',''),p_entrega ->> 'cliente_nome',
     nullif(p_entrega ->> 'telefone',''),p_entrega ->> 'endereco',v_itens,
     (p_entrega ->> 'total')::numeric,coalesce((p_entrega ->> 'taxa_entrega')::numeric,0),
-    p_entrega ->> 'pagamento','pendente',coalesce((p_entrega ->> 'data')::date,current_date),
-    coalesce((p_entrega ->> 'criado_em')::timestamptz,now()),nullif(p_entrega ->> 'obs',''),
+    p_entrega ->> 'pagamento','pendente',coalesce(nullif(btrim(p_entrega ->> 'data'),'')::date,current_date),
+    coalesce(nullif(btrim(p_entrega ->> 'criado_em'),'')::timestamptz,now()),nullif(p_entrega ->> 'obs',''),
     nullif(p_entrega ->> 'lat','')::numeric,nullif(p_entrega ->> 'lng','')::numeric,
     nullif(p_entrega ->> 'caixa_id',''),v_token,null,
     case when v_pin is null then null else extensions.crypt(v_pin, extensions.gen_salt('bf')) end,
@@ -404,7 +404,13 @@ begin
     raise exception 'Status de entrega inválido';
   end if;
 
-  if v_role = 'entregador' then
+  -- Owner e gerente podem assumir pessoalmente uma entrega. Depois disso,
+  -- seguem exatamente o fluxo e as provas exigidas de um entregador.
+  if v_role = 'entregador' or (
+    v_role in ('owner','gerente')
+    and p_novo_status in ('aceito','em_rota','entregue','nao_entregue')
+    and (p_novo_status = 'aceito' or v_entrega.entregador_id = v_usuario::text)
+  ) then
     if p_novo_status = 'aceito' then
       if v_entrega.status <> 'pendente' or v_entrega.entregador_id is not null then
         raise exception 'Esta entrega já foi aceita por outro entregador';
@@ -588,8 +594,8 @@ as $$
 declare v_usuario uuid := auth.uid(); v_loja text; v_nome text; v_limite numeric := 250;
 begin
   select loja_id,coalesce(nome,email,'Entregador') into v_loja,v_nome from public.perfis
-  where id = v_usuario and role = 'entregador';
-  if v_loja is null then raise exception 'Perfil de entregador inválido'; end if;
+  where id = v_usuario and role in ('entregador','owner','gerente');
+  if v_loja is null then raise exception 'Perfil sem permissão para rastrear entregas'; end if;
   if p_lat not between -90 and 90 or p_lng not between -180 and 180 then raise exception 'Coordenadas inválidas'; end if;
   select coalesce(precisao_maxima_m,250) into v_limite from public.config_entregas where loja_id = v_loja;
   if p_precisao_m is not null and p_precisao_m > greatest(v_limite,250) then raise exception 'Posição descartada por baixa precisão'; end if;

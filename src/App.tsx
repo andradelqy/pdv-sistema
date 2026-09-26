@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import type { Session } from '@supabase/supabase-js';
 import {
@@ -12,6 +12,7 @@ import { carregarTudo, configurarEscopoSync, getSyncQueueStatus, iniciarSincroni
 import { assinaturaEstaLiberada, dataDaAssinatura, type AssinaturaLoja } from './lib/assinatura';
 import { configurarContextoTelemetry, registrarErroAplicacao } from './lib/telemetry';
 import { ToastProvider } from './lib/toast';
+import { deveRecarregarContextoDaSessao } from './lib/authSession';
 import { Login } from './Login';
 const Dashboard = lazy(() => import('./pages/Dashboard').then(module => ({ default: module.Dashboard })));
 const PDV = lazy(() => import('./pages/PDV').then(module => ({ default: module.PDV })));
@@ -353,6 +354,7 @@ function AppContent() {
   const [acesso, setAcesso] = useState<EstadoAcesso | null>(null);
   const [page, setPage] = useState<Page>('dashboard');
   const [menuOpen, setMenuOpen] = useState(false);
+  const usuarioCarregadoId = useRef<string | null>(null);
   const { tema, toggleTema, produtos, entregas, caixaAberto, hydrateFromRemote, currentRole } = useStore();
   const location = useLocation();
 
@@ -373,10 +375,11 @@ function AppContent() {
   useEffect(() => {
     let ativo = true;
 
-    const carregarSessao = async (value: Session | null) => {
+    const carregarSessao = async (value: Session | null, mostrarCarregamento = false, forcar = false) => {
       if (!ativo) return;
       setSession(value);
       if (!value) {
+        usuarioCarregadoId.current = null;
         configurarEscopoSync(null, null);
         configurarContextoTelemetry({});
         setAcesso(null);
@@ -384,7 +387,9 @@ function AppContent() {
         return;
       }
 
-      setVerificandoSessao(true);
+      if (!forcar && usuarioCarregadoId.current === value.user.id) return;
+
+      if (mostrarCarregamento) setVerificandoSessao(true);
       try {
         const { data: perfil, error: perfilError } = await supabase
           .from('perfis')
@@ -398,6 +403,7 @@ function AppContent() {
 
         const estadoAcesso = await consultarAcessoDaLoja(perfil.loja_id);
         if (!ativo) return;
+        usuarioCarregadoId.current = value.user.id;
         setAcesso(estadoAcesso);
         if (!estadoAcesso.liberado) return;
 
@@ -421,10 +427,21 @@ function AppContent() {
       }
     };
 
-    void supabase.auth.getSession().then(({ data }) => carregarSessao(data.session));
+    void supabase.auth.getSession().then(({ data }) => carregarSessao(data.session, true, true));
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, value) => {
-      if (event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') return;
-      window.setTimeout(() => void carregarSessao(value), 0);
+      const proximoUsuarioId = value?.user.id ?? null;
+      if (!deveRecarregarContextoDaSessao(event, usuarioCarregadoId.current, proximoUsuarioId)) {
+        // Renova o objeto da sessão sem desmontar a página atual, seus modais
+        // ou os campos que o operador ainda está preenchendo.
+        if (value) setSession(value);
+        return;
+      }
+      const trocouDeUsuario = Boolean(
+        usuarioCarregadoId.current
+        && proximoUsuarioId
+        && usuarioCarregadoId.current !== proximoUsuarioId,
+      );
+      window.setTimeout(() => void carregarSessao(value, trocouDeUsuario, event === 'USER_UPDATED'), 0);
     });
 
     return () => {

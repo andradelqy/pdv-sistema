@@ -149,9 +149,9 @@ begin
 
   insert into public.vendas (id, user_id, loja_id, data, cliente_id, pagamento, total, obs, criado_em)
   values (
-    v_venda_id, v_usuario, v_loja, coalesce((p_venda ->> 'data')::date, current_date),
+    v_venda_id, v_usuario, v_loja, coalesce(nullif(btrim(p_venda ->> 'data'), '')::date, current_date),
     nullif(p_venda ->> 'cliente_id', ''), v_pagamento, v_total,
-    nullif(p_venda ->> 'obs', ''), coalesce((p_venda ->> 'criado_em')::timestamptz, now())
+    nullif(p_venda ->> 'obs', ''), coalesce(nullif(btrim(p_venda ->> 'criado_em'), '')::timestamptz, now())
   );
 
   insert into public.itens_venda (user_id, loja_id, venda_id, produto_id, produto_nome, quantidade, preco_unit)
@@ -179,7 +179,7 @@ begin
       v_usuario, v_loja, v_linha.produto_id,
       case when v_devolucao then 'entrada' else 'saida' end,
       v_linha.quantidade,
-      coalesce((p_venda ->> 'data')::date, current_date),
+      coalesce(nullif(btrim(p_venda ->> 'data'), '')::date, current_date),
       case when v_devolucao then 'devolucao' else 'venda' end,
       case when v_devolucao then 'Devolução' else 'Venda ' || v_pagamento end
     );
@@ -196,7 +196,7 @@ begin
     insert into public.caixa_entradas (user_id, loja_id, caixa_id, tipo, pagamento, valor, data, descricao)
     values (
       v_usuario, v_loja, p_caixa_id, 'venda', v_pagamento, v_total,
-      coalesce((p_venda ->> 'data')::date, current_date),
+      coalesce(nullif(btrim(p_venda ->> 'data'), '')::date, current_date),
       case when v_devolucao then 'Devolução' else 'Venda ' || v_pagamento end
     );
   end if;

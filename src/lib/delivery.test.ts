@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { agruparRotasPorEntrega, entregaEstaAtrasada, validarComprovanteEntrega } from './delivery'
+import { agruparRotasPorEntrega, entregaEstaAtrasada, podeOperarEntrega, validarComprovanteEntrega } from './delivery'
 
 describe('rastreabilidade de entregas', () => {
+  it('permite owner, gerente e entregador operarem uma entrega, mas não atendente', () => {
+    expect(podeOperarEntrega('owner')).toBe(true)
+    expect(podeOperarEntrega('gerente')).toBe(true)
+    expect(podeOperarEntrega('entregador')).toBe(true)
+    expect(podeOperarEntrega('atendente')).toBe(false)
+  })
+
   it('não mistura duas entregas do mesmo entregador', () => {
     const rotas = agruparRotasPorEntrega([
       { entregadorId: 'u1', entregaId: 'e1', lat: -23.5, lng: -46.6, criadoEm: '2026-09-24T10:00:00Z' },

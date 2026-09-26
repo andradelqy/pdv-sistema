@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import { fmtR, useStore, type PedidoEntrega } from './lib/store'
 import * as sync from './lib/sync'
-import { validarComprovanteEntrega } from './lib/delivery'
+import { podeOperarEntrega, validarComprovanteEntrega } from './lib/delivery'
 import { toast } from './lib/toast'
 import { supabase } from './lib/supabase'
 import 'leaflet/dist/leaflet.css'
@@ -49,7 +49,7 @@ function EtapasEntrega({ entrega }: { entrega: PedidoEntrega }) {
 }
 
 export function AppEntregador() {
-  const { entregas, updateStatusEntrega, sincronizarEntregas, currentUser, lojaId, setRole } = useStore()
+  const { entregas, updateStatusEntrega, sincronizarEntregas, currentUser, currentRole, lojaId, setRole } = useStore()
   const [perfilErro, setPerfilErro] = useState<string | null>(null)
   const [perfilCarregando, setPerfilCarregando] = useState(!currentUser)
   const [rastreando, setRastreando] = useState(false)
@@ -85,10 +85,10 @@ export function AppEntregador() {
       if (!ativo) return
       if (error) setPerfilErro(`Supabase: ${error.message}`)
       else if (!perfil) setPerfilErro('Nenhum perfil visível para esta sessão.')
-      else if (perfil.role !== 'entregador') setPerfilErro('Esta conta não possui o papel de entregador.')
+      else if (!podeOperarEntrega(perfil.role)) setPerfilErro('Esta conta não possui permissão para operar entregas.')
       else if (!perfil.loja_id) setPerfilErro('Seu perfil não possui loja vinculada.')
       else {
-        setRole('entregador', perfil.loja_id, { id: auth.user.id, nome: perfil.nome || perfil.email || auth.user.email || 'Entregador' })
+        setRole(perfil.role, perfil.loja_id, { id: auth.user.id, nome: perfil.nome || perfil.email || auth.user.email || 'Responsável' })
         setPerfilErro(null)
       }
       setPerfilCarregando(false)
@@ -182,10 +182,11 @@ export function AppEntregador() {
     } finally { setProcessando(null) }
   }
 
-  if (!currentUser) return <div className="mx-auto max-w-md rounded-xl border bg-card p-5 space-y-2"><b>{perfilCarregando ? 'Carregando seu perfil de entregador…' : 'Não foi possível abrir o App do Entregador'}</b>{perfilErro && <p className="text-sm text-rose-600">{perfilErro}</p>}</div>
+  if (!currentUser) return <div className="mx-auto max-w-md rounded-xl border bg-card p-5 space-y-2"><b>{perfilCarregando ? 'Carregando seu perfil operacional…' : 'Não foi possível abrir o App do Entregador'}</b>{perfilErro && <p className="text-sm text-rose-600">{perfilErro}</p>}</div>
+  if (!podeOperarEntrega(currentRole)) return <div className="mx-auto max-w-md rounded-xl border bg-card p-5 space-y-2"><b>Conta sem permissão operacional</b><p className="text-sm text-muted-foreground">Somente owner, gerente ou entregador podem assumir entregas. Use a tela de Entregas para acompanhar a operação.</p></div>
 
   return <div className="mx-auto flex max-w-2xl flex-col gap-4 pb-12">
-    <header className="flex items-center justify-between gap-3"><div><p className="text-sm text-muted-foreground">Operação de entrega</p><h1 className="text-2xl font-bold">Olá, {currentUser.nome.split(' ')[0]}</h1></div><button onClick={() => void sincronizarEntregas()} className="rounded-xl border p-3 hover:bg-muted" aria-label="Atualizar pedidos"><RefreshCw size={18} /></button></header>
+    <header className="flex items-center justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><p className="text-sm text-muted-foreground">Operação de entrega</p>{currentRole !== 'entregador' && <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-700 dark:text-blue-300">Gestão em operação</span>}</div><h1 className="text-2xl font-bold">Olá, {currentUser.nome.split(' ')[0]}</h1>{currentRole !== 'entregador' && <p className="mt-1 text-xs text-muted-foreground">Ao aceitar, você será registrado como responsável por esta entrega.</p>}</div><button onClick={() => void sincronizarEntregas()} className="rounded-xl border p-3 hover:bg-muted" aria-label="Atualizar pedidos"><RefreshCw size={18} /></button></header>
 
     <div className={`flex items-center gap-3 rounded-xl border p-3 text-sm ${gpsStatus === 'ativo' ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/20 dark:text-emerald-200' : gpsStatus === 'offline' ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/20' : 'bg-card'}`}>
       {rastreando ? <Navigation size={18} className={gpsStatus === 'ativo' ? 'text-emerald-600' : 'text-amber-600'} /> : <MapPin size={18} />}

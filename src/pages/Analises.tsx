@@ -4,6 +4,7 @@ import { ArrowDownRight, ArrowUpRight, ShoppingCart, Target } from 'lucide-react
 import { margemLiquida, useStore, fmtR } from '../lib/store'
 import { getSyncQueueStatus } from '../lib/sync'
 import { OperationalHealth } from '../components/OperationalHealth'
+import { formatarDataHoraVenda, ordenarVendasRecentes } from '../lib/sales'
 
 type PeriodoAnalise = 30 | 90 | 'all'
 
@@ -33,6 +34,7 @@ function baixarCsv(nome: string, cabecalho: string[], linhas: Array<Array<string
 export function Analises({ tipo }: { tipo: 'abc' | 'qpr' | 'alertas' | 'caixa' | 'historico' | 'backup' }) {
   const { produtos, vendas, clientes, caixaEntradas, caixas, caixaAberto, entregas, movimentacoes, pedidosCompra, lojaId, currentUser, abrirCaixa, fecharCaixa, resetDemo, clearAll } = useStore()
   const [periodo, setPeriodo] = useState<PeriodoAnalise>(90)
+  const vendasOrdenadas = useMemo(() => ordenarVendasRecentes(vendas), [vendas])
   const saidas = vendas.flatMap(v => v.itens.map(i => ({ ...i, data: v.data })))
   const ranking = useMemo(() => {
     const limite = periodo === 'all' ? null : new Date(Date.now() - periodo * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
@@ -71,7 +73,7 @@ export function Analises({ tipo }: { tipo: 'abc' | 'qpr' | 'alertas' | 'caixa' |
     return <div className="flex flex-col gap-4"><h2 className="text-xl font-bold">Alertas</h2>{itens.length ? <div className="flex flex-col gap-2">{itens.map((a, i) => <div key={i} className="card-adega p-4 flex gap-3 items-center"><span className={`badge-adega ${a[2]}`}>{a[0]}</span><span className="text-sm">{a[1]}</span></div>)}</div> : <div className="card-adega p-8 text-center text-success">Operação sem alertas de negócio.</div>}<OperationalHealth /></div>
   }
 
-  if (tipo === 'historico') return <div className="flex flex-col gap-4"><h2 className="text-xl font-bold">Histórico de Vendas</h2><div className="card-adega overflow-hidden"><div className="overflow-x-auto"><table className="tbl-adega"><thead><tr><th>Data</th><th>Cliente</th><th>Produtos</th><th>Total</th><th>Pagamento</th></tr></thead><tbody>{vendas.length ? [...vendas].reverse().map(v => <tr key={v.id}><td>{new Date(v.data + 'T12:00:00').toLocaleDateString('pt-BR')}</td><td>{clientes.find(c => c.id === v.clienteId)?.nome || '—'}</td><td>{v.itens.length ? v.itens.map(i => `${i.produtoNome || produtos.find(p => p.id === i.produtoId)?.nome || 'Produto não identificado'} x${i.quantidade}`).join(', ') : <span className="text-muted-foreground">Itens não recuperados</span>}</td><td className="font-semibold">{fmtR(v.total)}</td><td><span className="badge-adega badge-info">{v.pagamento}</span></td></tr>) : <tr><td colSpan={5} className="text-center py-8 text-muted-foreground">Nenhuma venda registrada</td></tr>}</tbody></table></div></div></div>
+  if (tipo === 'historico') return <div className="flex flex-col gap-4"><div><h2 className="text-xl font-bold">Histórico de Vendas</h2><p className="text-sm text-muted-foreground">Mais recentes primeiro.</p></div><div className="card-adega overflow-hidden"><div className="overflow-x-auto"><table className="tbl-adega"><thead><tr><th>Data e hora</th><th>Cliente</th><th>Produtos</th><th>Total</th><th>Pagamento</th></tr></thead><tbody>{vendasOrdenadas.length ? vendasOrdenadas.map(v => <tr key={v.id}><td className="whitespace-nowrap">{formatarDataHoraVenda(v)}</td><td>{clientes.find(c => c.id === v.clienteId)?.nome || '—'}</td><td>{v.itens.length ? v.itens.map(i => `${i.produtoNome || produtos.find(p => p.id === i.produtoId)?.nome || 'Produto não identificado'} x${i.quantidade}`).join(', ') : <span className="text-muted-foreground">Itens não recuperados</span>}</td><td className="font-semibold">{fmtR(v.total)}</td><td><span className="badge-adega badge-info">{v.pagamento}</span></td></tr>) : <tr><td colSpan={5} className="text-center py-8 text-muted-foreground">Nenhuma venda registrada</td></tr>}</tbody></table></div></div></div>
 
   if (tipo === 'caixa') {
     const inicio = caixaAberto?.abertoEm.slice(0, 10) || ''
