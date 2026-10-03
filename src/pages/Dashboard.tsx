@@ -1,7 +1,17 @@
 import { useState, useMemo } from 'react'
 import { useStore, fmtR, cortarData } from '../lib/store'
-import { hojeBRT, cortarDataBRT } from '../lib/dateBR'
+import { hojeBRT } from '../lib/dateBR'
 import { lucroDoPeriodo } from '../lib/lucro'
+import { calcularValorEstoque } from '../lib/inventoryValue'
+import {
+  chaveMesDaData,
+  dentroDoIntervalo,
+  formatarMes,
+  intervaloAnterior,
+  intervaloDashboard,
+  ultimosMeses,
+  type PeriodoDashboard,
+} from '../lib/dashboardPeriods'
 import { motion, type Variants } from 'motion/react'
 import {
   Package,
@@ -22,6 +32,8 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
+  BarChart,
+  Bar,
 } from 'recharts'
 
 // ============================================================
@@ -100,7 +112,9 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: DashboardDestina
   const { produtos, vendas, caixaEntradas, clientes } = useStore()
 
   // --- Estado de filtro de período ---
-  const [periodo, setPeriodo] = useState<'hoje' | 'semana' | 'mes'>('hoje')
+  const [periodo, setPeriodo] = useState<PeriodoDashboard>('hoje')
+  const hoje = hojeBRT()
+  const [mesHistorico, setMesHistorico] = useState(chaveMesDaData(hoje))
   const [recarregando, setRecarregando] = useState(false)
 
   const handleRefresh = () => {
@@ -108,26 +122,20 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: DashboardDestina
     setTimeout(() => setRecarregando(false), 400)
   }
 
-  // --- Datas (BRT) ---
-  const hoje = hojeBRT()
-  const ontem = useMemo(() => {
-    const d = new Date(); d.setDate(d.getDate() - 1); return hojeBRT(d)
-  }, [])
-  const corteSemana = useMemo(() => cortarDataBRT(7), [])
-  const corteMes = useMemo(() => cortarDataBRT(30), [])
+  // Períodos civis no horário de Brasília: semana começa na segunda e mês no dia 1.
+  const intervalo = useMemo(
+    () => intervaloDashboard(periodo, hoje, mesHistorico),
+    [periodo, hoje, mesHistorico],
+  )
 
   // --- Filtro de vendas por período ---
   const vendasFiltradas = useMemo(() => {
-    if (periodo === 'hoje') return vendas.filter(v => v.data === hoje)
-    const corte = periodo === 'semana' ? corteSemana : corteMes
-    return vendas.filter(v => !corte || v.data >= corte)
-  }, [vendas, periodo, hoje, corteSemana, corteMes])
+    return vendas.filter(v => dentroDoIntervalo(v.data, intervalo))
+  }, [vendas, intervalo])
 
   // --- Cálculos principais ---
   const receitaPeriodo = vendasFiltradas.reduce((s, v) => s + v.total, 0)
-  const totalEstoque = produtos.reduce((s, p) => s + p.precoCompra * p.estoque, 0)
-  const totalVendaEstoque = produtos.reduce((s, p) => s + p.precoVenda * p.estoque, 0)
-  const totalItensEstoque = produtos.reduce((s, p) => s + p.estoque, 0)
+  const valorEstoque = useMemo(() => calcularValorEstoque(produtos), [produtos])
   const criticos = produtos.filter(p => p.estoque <= p.estoqueMin)
 
   // Lucro líquido = Receita do período - CMV (custo dos itens vendidos).
@@ -138,37 +146,31 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: DashboardDestina
 
   // Comparação para variação percentual
   const variacaoReceita = useMemo(() => {
-    if (periodo === 'hoje') {
-      const receitaOntem = vendas.filter(v => v.data === ontem && v.pagamento !== 'fiado')
-        .reduce((s, v) => s + v.total, 0)
-      return receitaOntem > 0
-        ? { value: ((receitaPeriodo - receitaOntem) / receitaOntem) * 100, label: 'vs ontem' }
-        : null
-    }
-    if (periodo === 'semana') {
-      const d = new Date(); d.setDate(d.getDate() - 14)
-      const semanaPassadaInicio = hojeBRT(d)
-      const semanaPassadaFim = corteSemana
-      const receitaSemanaAnterior = vendas.filter(v => v.pagamento !== 'fiado' &&
-        (!semanaPassadaInicio || v.data >= semanaPassadaInicio) && v.data < semanaPassadaFim)
-        .reduce((s, v) => s + v.total, 0)
-      return receitaSemanaAnterior > 0
-        ? { value: ((receitaPeriodo - receitaSemanaAnterior) / receitaSemanaAnterior) * 100, label: 'vs sem. ant.' }
-        : null
-    }
-    if (periodo === 'mes') {
-      const d = new Date(); d.setDate(d.getDate() - 60)
-      const mesPassadoInicio = hojeBRT(d)
-      const mesPassadoFim = corteMes
-      const receitaMesAnterior = vendas.filter(v => v.pagamento !== 'fiado' &&
-        (!mesPassadoInicio || v.data >= mesPassadoInicio) && v.data < mesPassadoFim)
-        .reduce((s, v) => s + v.total, 0)
-      return receitaMesAnterior > 0
-        ? { value: ((receitaPeriodo - receitaMesAnterior) / receitaMesAnterior) * 100, label: 'vs mês ant.' }
-        : null
-    }
-    return null
-  }, [vendas, periodo, ontem, corteSemana, corteMes, receitaPeriodo])
+    if (periodo === 'historico') return null
+    const anterior = intervaloAnterior(periodo, intervalo)
+    const receitaAnterior = vendas
+      .filter(v => v.pagamento !== 'fiado' && dentroDoIntervalo(v.data, anterior))
+      .reduce((s, v) => s + v.total, 0)
+    return receitaAnterior > 0
+      ? { value: ((receitaPeriodo - receitaAnterior) / receitaAnterior) * 100, label: anterior.rotulo }
+      : null
+  }, [vendas, periodo, intervalo, receitaPeriodo])
+
+  const historicoMensal = useMemo(() => {
+    return ultimosMeses(hoje).map(chave => {
+      const vendasMes = vendas.filter(v => chaveMesDaData(v.data) === chave)
+      const resultado = lucroDoPeriodo(vendasMes, produtos, caixaEntradas)
+      return {
+        chave,
+        mes: formatarMes(chave),
+        label: formatarMes(chave).replace(/ de /, '/').slice(0, 8),
+        vendas: vendasMes.length,
+        receita: resultado.receita,
+        lucro: resultado.lucro,
+        ticket: vendasMes.length ? resultado.receita / vendasMes.length : 0,
+      }
+    })
+  }, [hoje, vendas, produtos, caixaEntradas])
 
   // --- Top 5 do período selecionado ---
   const topMap: Record<string, number> = {}
@@ -290,7 +292,7 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: DashboardDestina
           <div className="flex items-center gap-2">
             {/* Seletor de período */}
             <div className="flex items-center gap-1 bg-white/80 dark:bg-white/5 backdrop-blur-sm border border-white/20 dark:border-white/10 rounded-lg p-1">
-              {(['hoje', 'semana', 'mes'] as const).map(p => (
+              {(['hoje', 'semana', 'mes', 'historico'] as const).map(p => (
                 <button
                   key={p}
                   onClick={() => setPeriodo(p)}
@@ -300,10 +302,21 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: DashboardDestina
                       : 'text-slate-600 dark:text-white/70 hover:bg-white/20 dark:hover:bg-white/10'
                   }`}
                 >
-                  {p === 'hoje' ? 'Hoje' : p === 'semana' ? 'Semana' : 'Mês'}
+                  {p === 'hoje' ? 'Hoje' : p === 'semana' ? 'Semana' : p === 'mes' ? 'Mês' : 'Histórico'}
                 </button>
               ))}
             </div>
+
+            {periodo === 'historico' && (
+              <input
+                type="month"
+                value={mesHistorico}
+                max={chaveMesDaData(hoje)}
+                onChange={event => setMesHistorico(event.target.value || chaveMesDaData(hoje))}
+                aria-label="Mês histórico"
+                className="rounded-lg border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-700 dark:border-white/10 dark:bg-white/5 dark:text-white"
+              />
+            )}
 
             {/* Botão atualizar */}
             <button
@@ -329,19 +342,19 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: DashboardDestina
           <KpiCard
             label="Produtos"
             value={produtos.length}
-            sub={`${totalItensEstoque} un em estoque`}
+            sub={`${valorEstoque.quantidadeFisica.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} un físicas em estoque`}
             icon={Package}
             color="text-indigo-500 dark:text-indigo-400"
           />
           <KpiCard
             label="Valor em Estoque"
-            value={fmtR(totalEstoque)}
-            sub={`Potencial de Lucro: ${fmtR(totalVendaEstoque - totalEstoque)}`}
+            value={fmtR(valorEstoque.valorCusto)}
+            sub={`Potencial de lucro: ${fmtR(valorEstoque.lucroPotencial)}`}
             icon={Coins}
             color="text-emerald-600 dark:text-emerald-400"
           />
           <KpiCard
-            label={periodo === 'hoje' ? 'Vendas Hoje' : periodo === 'semana' ? 'Vendas Semana' : 'Vendas Mês'}
+            label={periodo === 'hoje' ? 'Vendas Hoje' : periodo === 'semana' ? 'Vendas Semana' : periodo === 'mes' ? 'Vendas Mês' : `Vendas · ${intervalo.rotulo}`}
             value={vendasFiltradas.length}
             sub={fmtR(receitaPeriodo)}
             icon={ShoppingCart}
@@ -349,7 +362,7 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: DashboardDestina
             variation={variacaoReceita}
           />
           <KpiCard
-            label={periodo === 'hoje' ? 'Lucro Líquido Hoje' : periodo === 'semana' ? 'Lucro Líquido Semana' : 'Lucro Líquido Mês'}
+            label={periodo === 'hoje' ? 'Lucro Líquido Hoje' : periodo === 'semana' ? 'Lucro Líquido Semana' : periodo === 'mes' ? 'Lucro Líquido Mês' : `Lucro · ${intervalo.rotulo}`}
             value={fmtR(lucroLiquidoPeriodo)}
             sub={`CMV: -${fmtR(Math.max(0, receitaPeriodo - lucroLiquidoPeriodo))}`}
             icon={DollarSign}
@@ -426,11 +439,11 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: DashboardDestina
           >
             <h3 className="text-sm font-semibold text-slate-700 dark:text-white/90 flex items-center gap-2 mb-3">
               <BarChart3 size={16} className="text-amber-500" />
-              {periodo === 'hoje' ? 'Top 5 de Hoje' : periodo === 'semana' ? 'Top 5 da Semana' : 'Top 5 do Mês'}
+              {periodo === 'hoje' ? 'Top 5 de Hoje' : periodo === 'semana' ? 'Top 5 da Semana' : periodo === 'mes' ? 'Top 5 do Mês' : `Top 5 · ${intervalo.rotulo}`}
             </h3>
             {top5.length === 0 ? (
               <p className="text-sm text-slate-500 dark:text-white/50">
-                Nenhuma venda registrada {periodo === 'hoje' ? 'hoje' : periodo === 'semana' ? 'na semana' : 'no mês'}.
+                Nenhuma venda registrada {periodo === 'hoje' ? 'hoje' : periodo === 'semana' ? 'na semana' : `em ${intervalo.rotulo.toLocaleLowerCase('pt-BR')}`}.
               </p>
             ) : (
               <div className="flex flex-col gap-3">
@@ -459,6 +472,61 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: DashboardDestina
             )}
           </motion.div>
         </div>
+
+        {/* Histórico persistente calculado das vendas armazenadas */}
+        <motion.div
+          variants={itemVariants}
+          className="rounded-xl border border-white/20 bg-white/60 p-4 shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-white/5 dark:shadow-none"
+        >
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-white/90">
+                <BarChart3 size={16} className="text-amber-500" />
+                Histórico de desempenho
+              </h3>
+              <p className="mt-1 text-xs text-slate-500 dark:text-white/50">
+                Os dados não são zerados: este painel recompõe os últimos 12 meses pelas vendas salvas.
+              </p>
+            </div>
+            <button
+              onClick={() => { setPeriodo('historico'); setMesHistorico(historicoMensal.at(-2)?.chave || chaveMesDaData(hoje)) }}
+              className="text-xs font-semibold text-amber-600 transition hover:text-amber-700 dark:text-amber-400"
+            >
+              Consultar mês anterior
+            </button>
+          </div>
+
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={historicoMensal}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" strokeOpacity={0.3} />
+                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                  <YAxis tickFormatter={v => fmtR(v)} tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} width={58} />
+                  <Tooltip formatter={(value) => fmtR(Number(value) || 0)} labelFormatter={(_, payload) => payload?.[0]?.payload?.mes || ''} />
+                  <Bar dataKey="receita" name="Faturamento" fill="#EAB308" radius={[5, 5, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="max-h-64 overflow-auto rounded-lg border border-slate-200/70 dark:border-white/10">
+              <table className="w-full text-left text-xs">
+                <thead className="sticky top-0 bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-white/60">
+                  <tr><th className="p-2">Mês</th><th className="p-2 text-right">Vendas</th><th className="p-2 text-right">Receita</th><th className="p-2 text-right">Ticket</th></tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200/70 dark:divide-white/10">
+                  {[...historicoMensal].reverse().map(item => (
+                    <tr key={item.chave} className="cursor-pointer hover:bg-amber-50/70 dark:hover:bg-amber-500/10" onClick={() => { setPeriodo('historico'); setMesHistorico(item.chave) }}>
+                      <td className="p-2 font-medium capitalize text-slate-700 dark:text-white/80">{item.mes}</td>
+                      <td className="p-2 text-right">{item.vendas}</td>
+                      <td className="p-2 text-right font-medium">{fmtR(item.receita)}</td>
+                      <td className="p-2 text-right">{fmtR(item.ticket)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </motion.div>
 
         {/* Assistente + Rentabilidade */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
