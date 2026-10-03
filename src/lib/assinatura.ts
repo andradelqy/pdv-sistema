@@ -1,7 +1,7 @@
 export type AssinaturaLoja = {
   loja_id: string;
   nome_loja: string;
-  plano: string;
+  plano: 'basico' | 'pro' | 'empresarial' | 'cortesia' | 'teste' | string;
   status: 'trial' | 'active' | 'past_due' | 'suspended' | 'cancelled';
   periodo_teste_ate: string | null;
   acesso_ate: string | null;

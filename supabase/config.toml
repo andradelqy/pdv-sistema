@@ -5,6 +5,11 @@ verify_jwt = true
 import_map = "./functions/geocodificar-entrega/deno.json"
 entrypoint = "./functions/geocodificar-entrega/index.ts"
 
+[functions.catalogo-publico]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/catalogo-publico/index.ts"
+
 [functions.whatsapp-campanha]
 enabled = false
 verify_jwt = true

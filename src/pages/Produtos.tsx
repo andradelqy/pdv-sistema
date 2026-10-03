@@ -4,6 +4,7 @@ import { calcularImportancia } from '../lib/intelligence/Importance'
 import { sugerirEstoqueMinimo } from '../lib/intelligence/engine'
 import { toast } from '../lib/toast'
 import { Plus, Pencil, Trash2, Search, Sparkles } from 'lucide-react'
+import type { PlanoComercial } from '../lib/plans'
 
 const EMPTY: Omit<Produto, 'id'> = {
   sku: '', nome: '', barcode: '', descricao: '', categoria: '', fornecedor: '',
@@ -12,18 +13,20 @@ const EMPTY: Omit<Produto, 'id'> = {
   quantidadeMinimaCompra: 1, multiploCompra: 1,
 }
 
-export function Produtos() {
+export function Produtos({ plano }: { plano: PlanoComercial }) {
   const { produtos, vendas, pedidosCompra, addProduto, updateProduto, deleteProduto } = useStore()
+  const recursosInteligentes = plano !== 'basico'
   
   // Atualiza importâncias automaticamente quando dados mudam
   useEffect(() => {
+    if (!recursosInteligentes) return
     produtos.forEach(p => {
        const imp = calcularImportancia(p, vendas, produtos);
        if (p.automaticQualityScore !== imp.score) {
          updateProduto({ ...p, automaticQualityScore: imp.score, automaticQualityLevel: imp.level, confidenceScore: 80 });
        }
     });
-  }, [produtos, vendas, updateProduto]);
+  }, [produtos, vendas, updateProduto, recursosInteligentes]);
   const [busca, setBusca] = useState('')
   const [filterCat, setFilterCat] = useState('')
   const [modal, setModal] = useState(false)
@@ -81,7 +84,9 @@ export function Produtos() {
     }
     
     // Calcula sugerido ao salvar
-    const sugerido = sugerirEstoqueMinimo(f, vendasParaControleEstoque(vendas, produtos), pedidosCompra)
+    const sugerido = recursosInteligentes
+      ? sugerirEstoqueMinimo(f, vendasParaControleEstoque(vendas, produtos), pedidosCompra)
+      : (editId ? f.estoqueMin : 0)
     
     const produtoSalvo = {
       ...f,
@@ -89,7 +94,7 @@ export function Produtos() {
       unidadesPorEstoqueOrigem: f.produtoEstoqueOrigemId ? Math.max(1, f.unidadesPorEstoqueOrigem || 1) : undefined,
       estoque: f.produtoEstoqueOrigemId ? 0 : f.estoque,
       estoqueMin: f.produtoEstoqueOrigemId ? 0 : sugerido,
-      pontoPedido: f.produtoEstoqueOrigemId ? 0 : Math.max(sugerido + 2, Math.ceil(sugerido * 1.5)),
+      pontoPedido: f.produtoEstoqueOrigemId ? 0 : recursosInteligentes ? Math.max(sugerido + 2, Math.ceil(sugerido * 1.5)) : (editId ? f.pontoPedido : 0),
       imposto: 0,
       frete: 0,
       comissao: 0,
@@ -167,8 +172,8 @@ export function Produtos() {
                     </td>
                     <td>
                       <div className="flex items-center gap-1.5">
-                        <span className="text-foreground font-medium">{p.produtoEstoqueOrigemId ? 'Origem' : p.estoqueMin}</span>
-                        {!p.produtoEstoqueOrigemId && temDivergencia && (
+                        <span className="text-foreground font-medium">{!recursosInteligentes ? '—' : p.produtoEstoqueOrigemId ? 'Origem' : p.estoqueMin}</span>
+                        {recursosInteligentes && !p.produtoEstoqueOrigemId && temDivergencia && (
                           <span
                             className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-semibold cursor-help"
                             title={`Mínimo sugerido pelo giro de vendas: ${sugerido} un`}
@@ -214,7 +219,7 @@ export function Produtos() {
               <button onClick={() => setModal(false)} className="text-muted-foreground hover:text-foreground">✕</button>
             </div>
 
-            <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center gap-2">
+            {recursosInteligentes && <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center gap-2">
               <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-400">
                  <Sparkles size={16} className="text-amber-500 shrink-0" />
                  <span>
@@ -224,7 +229,7 @@ export function Produtos() {
                    </strong>
                  </span>
                </div>
-            </div>
+            </div>}
 
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
               {([
@@ -241,7 +246,10 @@ export function Produtos() {
                 ['Margem Alvo (%)', 'margemAlvo', 'number'],
                 ['Estoque físico', 'estoque', 'number'],
                 ['URL Imagem', 'imagem', 'text'],
-              ] as [string, keyof Omit<Produto, 'id'>, string][]).filter(([, key]) => key !== 'estoque' || !(form as Produto).produtoEstoqueOrigemId).map(([label, key, type]) => (
+              ] as [string, keyof Omit<Produto, 'id'>, string][])
+                .filter(([, key]) => key !== 'estoque' || !(form as Produto).produtoEstoqueOrigemId)
+                .filter(([, key]) => recursosInteligentes || !['fornecedor', 'leadTime', 'quantidadeMinimaCompra', 'multiploCompra'].includes(key))
+                .map(([label, key, type]) => (
                 <div key={key}>
                   <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-1">{label}</label>
                   <input
@@ -254,7 +262,7 @@ export function Produtos() {
                 </div>
               ))}
             </div>
-            <div className="mt-4 p-4 border border-border rounded-xl bg-muted/30 space-y-3">
+            {recursosInteligentes && <div className="mt-4 p-4 border border-border rounded-xl bg-muted/30 space-y-3">
               <div>
                 <h4 className="text-sm font-semibold">Composição de estoque</h4>
                 <p className="text-xs text-muted-foreground">Use para itens derivados, como doses. A venda do item baixará o estoque do produto físico vinculado.</p>
@@ -275,7 +283,7 @@ export function Produtos() {
                   <input type="number" min={1} step="1" className="w-full p-2 border border-border rounded-lg bg-background" value={(form as Produto).unidadesPorEstoqueOrigem || ''} onChange={e => setField('unidadesPorEstoqueOrigem', parseFloat(e.target.value) || 1)} />
                 </div>
               )}
-            </div>
+            </div>}
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => setModal(false)} className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted">Cancelar</button>
               <button onClick={salvar} className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:opacity-90">Salvar</button>

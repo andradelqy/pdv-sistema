@@ -37,6 +37,12 @@ imediatamente.
 - CRM básico com tags, observações, fiado e histórico do cliente.
 - Central de ofertas com imagens, produtos vinculados, públicos segmentados,
   consentimento de marketing e fila assistida para envio pelo WhatsApp.
+- Catálogo virtual público conectado ao estoque, com categorias, destaques,
+  ofertas, galeria, carrinho e pedido consolidado no WhatsApp;
+- catálogo em Português (Brasil), Espanhol e Inglês, com traduções e fallback;
+- regras comerciais da vitrine: pedido mínimo, entrega, pagamentos, horários,
+  regiões atendidas, SEO, QR Code e indicadores de conversão;
+  identidade visual, disponibilidade e pedido assistido pelo WhatsApp.
 - Testes automatizados para compras, estoque composto, assinatura, permissões,
   lucro e indicadores gerenciais.
 - Workflow de qualidade com lint, testes e build no GitHub Actions.
@@ -184,6 +190,22 @@ A central utiliza os telefones cadastrados em **Clientes** e não lê a agenda d
 WhatsApp. O funcionamento atual e a evolução futura para a API oficial estão documentados em
 [`docs/WHATSAPP.md`](docs/WHATSAPP.md).
 
+### Catálogo Virtual
+
+- Produtos do estoque aparecem automaticamente como base da vitrine.
+- Publicação individual ou em lote sem remover produtos do cadastro interno.
+- Categorias ordenáveis, destaques, descrição, preço e imagem exclusivos por
+  upload ou URL pública.
+- Logo, banner, cores, WhatsApp e endereço público personalizados por loja.
+- Busca e filtros em uma página pública responsiva, sem exigir login do cliente.
+- Disponibilidade calculada pelo estoque real, inclusive para doses vinculadas
+  a garrafas pela composição de estoque.
+- Pausa e publicação imediatas pelo lojista.
+- Administração restrita a `owner` e `gerente`, com RLS por `loja_id`.
+
+O fluxo, a segurança e a publicação da função pública estão detalhados em
+[`docs/CATALOGO_VIRTUAL.md`](docs/CATALOGO_VIRTUAL.md).
+
 ### Entregas
 
 - Criação do pedido com cliente, telefone, endereço, itens, taxa e pagamento.
@@ -245,11 +267,11 @@ O desenho de segurança e a implantação estão detalhados em
 O Supabase Auth identifica o usuário. A tabela `public.perfis` armazena nome,
 papel, status e `loja_id`.
 
-| Papel | Acesso principal |
-| --- | --- |
-| `owner` | Todos os módulos e gestão da equipe |
-| `gerente` | Operação, estoque, compras, relatórios e entregas |
-| `atendente` | PDV, pedidos de entrega, histórico e clientes |
+| Papel        | Acesso principal                                                  |
+| ------------ | ----------------------------------------------------------------- |
+| `owner`      | Todos os módulos e gestão da equipe                               |
+| `gerente`    | Operação, estoque, compras, relatórios e entregas                 |
+| `atendente`  | PDV, pedidos de entrega, histórico e clientes                     |
 | `entregador` | App do entregador; somente pedidos disponíveis e atribuídos a ele |
 
 O menu é filtrado no frontend e as operações também são limitadas por RLS no
@@ -261,6 +283,20 @@ enxergar outras lojas.
 
 A assinatura comercial pertence à loja, e não a cada perfil. Todos os usuários
 com o mesmo `loja_id` utilizam o mesmo registro em `assinaturas_lojas`.
+
+### Planos funcionais
+
+| Plano       | Valor mensal | Usuários | Módulos liberados                                                                                                  |
+| ----------- | -----------: | -------: | ------------------------------------------------------------------------------------------------------------------ |
+| Básico      |     R$ 69,00 |        2 | PDV, caixa, produtos, histórico, movimentações, inventário, backup e exportações                                   |
+| Pro         |    R$ 129,00 |        7 | Tudo do Básico, compras e estoque inteligentes, ABC/QPR, clientes, entregas, ofertas, ponto e relatórios avançados |
+| Empresarial |    R$ 199,90 |       20 | Tudo do Pro, acompanhado pelos serviços de implantação, treinamento e suporte contratados                          |
+
+O Pro anual equivale a R$ 103,20 por mês (R$ 1.238,40 por ano). O menu é
+filtrado pelo plano e pelo papel. Limites de equipe, papéis do Básico,
+composição dose/garrafa e módulos avançados também são protegidos no banco,
+inclusive quando uma operação passa por RPC. O plano `cortesia` permanece como
+opção interna e equivale tecnicamente ao Empresarial.
 
 Estados suportados:
 
@@ -361,6 +397,7 @@ supabase/
   migrations/                   evolução incremental do banco
 docs/
   ASSINATURAS.md
+  PLANOS_COMERCIAIS.md          textos e tabela comparativa para a landing page
   PRODUCAO.md
 ```
 
@@ -386,6 +423,7 @@ VITE_SUPABASE_ANON_KEY=sua-chave-publicavel-ou-anon
 VITE_LEGAL_NAME=Razão social ou nome do responsável
 VITE_LEGAL_DOCUMENT=CNPJ ou CPF do responsável
 VITE_SUPPORT_EMAIL=suporte@seudominio.com.br
+VITE_SUPPORT_WHATSAPP=5511999999999
 VITE_PRIVACY_EMAIL=privacidade@seudominio.com.br
 ```
 
@@ -411,23 +449,26 @@ bootstrap destrutivo.
 Faça backup, valide primeiro em homologação e aplique somente as migrations
 ainda pendentes.
 
-| Migration | Finalidade |
-| --- | --- |
-| `20260913_multitenant_sync.sql` | `loja_id`, compartilhamento por loja, compras, rastreio e composição |
-| `20260915_confiabilidade_operacional.sql` | auditoria e confirmação atômica da venda |
-| `20260915_reparar_itens_venda.sql` | recupera vínculos históricos de itens quando possível |
-| `20260915_restringir_entregador.sql` | limita o entregador aos recursos de entrega |
-| `20260915_tracking_realtime.sql` | pontos de GPS e políticas de rastreamento |
-| `20260916_producao_estoque_compras_crm.sql` | inventário, preços, CRM, helpers privados e policies de perfis |
-| `20260916212101_controle_manual_assinaturas.sql` | assinatura manual e bloqueio restritivo por loja |
-| `20260918005738_corrigir_auditoria_venda_atomica.sql` | corrige permissões da auditoria transacional |
-| `20260918010403_suportar_devolucao_atomica.sql` | devolução idempotente no fluxo de venda |
-| `20260918013910_garantir_item_unico_pedido_compra.sql` | chave de conflito segura dos itens de compra |
-| `20260921023856_central_ofertas_whatsapp.sql` | ofertas, consentimento e campanhas assistidas |
-| `20260921200635_whatsapp_embedded_signup_autonomo.sql` | estruturas futuras da integração profissional |
-| `20260923182718_production_hardening.sql` | índices, grants, telemetria, PIN seguro e recebimento atômico |
+| Migration                                                    | Finalidade                                                                                               |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `20260913_multitenant_sync.sql`                              | `loja_id`, compartilhamento por loja, compras, rastreio e composição                                     |
+| `20260915_confiabilidade_operacional.sql`                    | auditoria e confirmação atômica da venda                                                                 |
+| `20260915_reparar_itens_venda.sql`                           | recupera vínculos históricos de itens quando possível                                                    |
+| `20260915_restringir_entregador.sql`                         | limita o entregador aos recursos de entrega                                                              |
+| `20260915_tracking_realtime.sql`                             | pontos de GPS e políticas de rastreamento                                                                |
+| `20260916_producao_estoque_compras_crm.sql`                  | inventário, preços, CRM, helpers privados e policies de perfis                                           |
+| `20260916212101_controle_manual_assinaturas.sql`             | assinatura manual e bloqueio restritivo por loja                                                         |
+| `20260918005738_corrigir_auditoria_venda_atomica.sql`        | corrige permissões da auditoria transacional                                                             |
+| `20260918010403_suportar_devolucao_atomica.sql`              | devolução idempotente no fluxo de venda                                                                  |
+| `20260918013910_garantir_item_unico_pedido_compra.sql`       | chave de conflito segura dos itens de compra                                                             |
+| `20260921023856_central_ofertas_whatsapp.sql`                | ofertas, consentimento e campanhas assistidas                                                            |
+| `20260921200635_whatsapp_embedded_signup_autonomo.sql`       | estruturas futuras da integração profissional                                                            |
+| `20260923182718_production_hardening.sql`                    | índices, grants, telemetria, PIN seguro e recebimento atômico                                            |
 | `20260923211311_corrigir_advisors_seguranca_performance.sql` | corrige os avisos dos Advisors, consolida policies, remove índices duplicados e isola RPCs privilegiadas |
-| `20260924183909_entregas_rastreabilidade_producao.sql` | operações atômicas, RLS por papel, prova de entrega, timeline e rastreamento público |
+| `20260924183909_entregas_rastreabilidade_producao.sql`       | operações atômicas, RLS por papel, prova de entrega, timeline e rastreamento público                     |
+| `20261001031741_planos_comerciais_funcionais.sql`            | planos Básico/Pro/Empresarial, limites de usuários e bloqueio dos módulos avançados                      |
+| `20261003000413_catalogo_virtual_showcase.sql`               | catálogo virtual multiempresa, categorias, apresentação de produtos, imagens e RLS                       |
+| `20261003012000_catalogo_comercial_multilingue.sql`          | idiomas, configuração comercial, métricas anonimizadas, RLS e indicadores do catálogo                    |
 
 Após aplicar:
 
@@ -448,13 +489,17 @@ pode fazer.
 
 Para um colaborador de uma loja existente:
 
-1. Crie ou convide a conta no Supabase Auth.
-2. Confirme a criação do perfil.
-3. Use o mesmo `loja_id` da empresa.
-4. Defina `role` como `owner`, `gerente`, `atendente` ou `entregador`.
+1. Entre como `owner` e abra **Equipe**.
+2. Informe nome, e-mail e papel e envie o convite.
+3. A Edge Function valida a sessão, o plano e o limite antes de criar a conta.
+4. O perfil recebe automaticamente o `loja_id` da empresa.
+
+No plano Básico são permitidos `owner` e `atendente`. Pro e Empresarial também
+liberam `gerente` e `entregador`. Alterações diretas no banco obedecem aos mesmos
+limites.
 
 Para uma nova loja, o primeiro perfil `owner` provisiona automaticamente uma
-assinatura de teste de 7 dias depois da migration de hardening. Confirme a linha
+assinatura Pro de teste por 7 dias. Confirme a linha
 em `assinaturas_lojas`; não crie uma assinatura para cada funcionário.
 
 ## Scripts e validação

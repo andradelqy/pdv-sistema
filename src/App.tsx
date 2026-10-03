@@ -4,7 +4,7 @@ import type { Session } from '@supabase/supabase-js';
 import {
   BarChart3, Bell, Boxes, ChartNoAxesCombined, Clock3, Database, Gauge, MapPinned,
   Menu, Moon, Package, ShoppingCart, Sun, Truck, Users, Wallet, LogOut, Loader2,
-  FileChartColumn, LockKeyhole, Megaphone
+  FileChartColumn, LockKeyhole, Megaphone, BadgeDollarSign, UserCog, Store
 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { useStore } from './lib/store';
@@ -13,6 +13,7 @@ import { assinaturaEstaLiberada, dataDaAssinatura, type AssinaturaLoja } from '.
 import { configurarContextoTelemetry, registrarErroAplicacao } from './lib/telemetry';
 import { ToastProvider } from './lib/toast';
 import { deveRecarregarContextoDaSessao } from './lib/authSession';
+import { normalizarPlano, planoPermitePagina, configuracaoDoPlano, type PlanoComercial } from './lib/plans';
 import { Login } from './Login';
 const Dashboard = lazy(() => import('./pages/Dashboard').then(module => ({ default: module.Dashboard })));
 const PDV = lazy(() => import('./pages/PDV').then(module => ({ default: module.PDV })));
@@ -22,42 +23,53 @@ const Movimentacoes = lazy(() => import('./pages/Movimentacoes').then(module => 
 const Compras = lazy(() => import('./pages/Compras').then(module => ({ default: module.Compras })));
 const Clientes = lazy(() => import('./pages/Clientes').then(module => ({ default: module.Clientes })));
 const Ofertas = lazy(() => import('./pages/Ofertas').then(module => ({ default: module.Ofertas })));
+const Catalogo = lazy(() => import('./pages/Catalogo').then(module => ({ default: module.Catalogo })));
 const Analises = lazy(() => import('./pages/Analises').then(module => ({ default: module.Analises })));
 const Relatorios = lazy(() => import('./pages/Relatorios').then(module => ({ default: module.Relatorios })));
 const PontoEletronico = lazy(() => import('./PontoEletronico').then(module => ({ default: module.PontoEletronico })));
 const AppEntregador = lazy(() => import('./AppEntregador').then(module => ({ default: module.AppEntregador })));
 const PainelMapa = lazy(() => import('./PainelMapa').then(module => ({ default: module.PainelMapa })));
+const UserManagement = lazy(() => import('./components/UserManagement').then(module => ({ default: module.UserManagement })));
+const Planos = lazy(() => import('./pages/Planos').then(module => ({ default: module.Planos })));
 import { Termos } from './pages/Termos';
 import { Privacidade } from './pages/Privacidade';
 import { AcompanharEntrega } from './pages/AcompanharEntrega';
+import { CatalogoPublico } from './pages/CatalogoPublico';
 
-type Page = 'dashboard' | 'pdv' | 'entregas_pdv' | 'ponto' | 'entregador' | 'mapa' | 'produtos' | 'movimentacoes' | 'compras' | 'clientes' | 'ofertas' | 'caixa' | 'relatorios' | 'historico' | 'abc' | 'qpr' | 'alertas' | 'backup';
+type Page = 'dashboard' | 'pdv' | 'entregas_pdv' | 'ponto' | 'entregador' | 'mapa' | 'produtos' | 'movimentacoes' | 'compras' | 'clientes' | 'ofertas' | 'catalogo' | 'caixa' | 'relatorios' | 'historico' | 'abc' | 'qpr' | 'alertas' | 'backup' | 'equipe' | 'plano';
 
 const nav: { group: string; items: { page: Page; label: string; icon: typeof Gauge }[] }[] = [
   { group: 'Visão Geral', items: [{ page: 'dashboard', label: 'Dashboard', icon: Gauge }] },
   { group: 'Vendas', items: [{ page: 'pdv', label: 'PDV', icon: ShoppingCart }, { page: 'entregas_pdv', label: 'Entregas', icon: Truck }, { page: 'historico', label: 'Histórico', icon: Clock3 }] },
   { group: 'Estoque', items: [{ page: 'produtos', label: 'Produtos', icon: Package }, { page: 'movimentacoes', label: 'Movimentações', icon: Boxes }, { page: 'compras', label: 'Compras', icon: ShoppingCart }] },
   { group: 'Pessoas', items: [{ page: 'clientes', label: 'Clientes', icon: Users }, { page: 'ponto', label: 'Ponto Eletrônico', icon: Clock3 }] },
-  { group: 'Marketing', items: [{ page: 'ofertas', label: 'Ofertas e WhatsApp', icon: Megaphone }] },
+  { group: 'Marketing', items: [{ page: 'ofertas', label: 'Ofertas e WhatsApp', icon: Megaphone }, { page: 'catalogo', label: 'Catálogo Virtual', icon: Store }] },
   { group: 'Entregas', items: [{ page: 'entregador', label: 'App Entregador', icon: Truck }, { page: 'mapa', label: 'Rastreamento', icon: MapPinned }] },
   { group: 'Financeiro', items: [{ page: 'caixa', label: 'Caixa', icon: Wallet }, { page: 'relatorios', label: 'Relatórios', icon: FileChartColumn }] },
   { group: 'Análise', items: [{ page: 'abc', label: 'Curva ABC', icon: BarChart3 }, { page: 'qpr', label: 'Matriz QPR', icon: ChartNoAxesCombined }, { page: 'alertas', label: 'Alertas', icon: Bell }] },
-  { group: 'Sistema', items: [{ page: 'backup', label: 'Backup', icon: Database }] },
+  { group: 'Sistema', items: [{ page: 'equipe', label: 'Equipe', icon: UserCog }, { page: 'backup', label: 'Backup', icon: Database }, { page: 'plano', label: 'Plano e assinatura', icon: BadgeDollarSign }] },
 ];
 
 const titles: Record<Page, string> = {
-  dashboard: 'Dashboard', pdv: 'Ponto de Venda', entregas_pdv: 'PDV Entregas', ponto: 'Ponto Eletrônico', entregador: 'App do Entregador', mapa: 'Rastreamento de Entregas', produtos: 'Produtos', movimentacoes: 'Movimentações', compras: 'Compras', clientes: 'Clientes', ofertas: 'Central de Ofertas', caixa: 'Caixa', relatorios: 'Relatórios', historico: 'Histórico de Vendas', abc: 'Curva ABC', qpr: 'Matriz QPR', alertas: 'Alertas', backup: 'Backup'
+  dashboard: 'Dashboard', pdv: 'Ponto de Venda', entregas_pdv: 'PDV Entregas', ponto: 'Ponto Eletrônico', entregador: 'App do Entregador', mapa: 'Rastreamento de Entregas', produtos: 'Produtos', movimentacoes: 'Movimentações', compras: 'Compras', clientes: 'Clientes', ofertas: 'Central de Ofertas', catalogo: 'Catálogo Virtual', caixa: 'Caixa', relatorios: 'Relatórios', historico: 'Histórico de Vendas', abc: 'Curva ABC', qpr: 'Matriz QPR', alertas: 'Alertas', backup: 'Backup', equipe: 'Equipe', plano: 'Plano e assinatura'
 };
 
 const paginasPorPapel: Record<'owner' | 'gerente' | 'atendente' | 'entregador', Page[]> = {
   owner: nav.flatMap(group => group.items.map(item => item.page)),
-  gerente: nav.flatMap(group => group.items.map(item => item.page)),
+  gerente: nav.flatMap(group => group.items.map(item => item.page)).filter(page => page !== 'equipe' && page !== 'plano'),
   atendente: ['pdv', 'entregas_pdv', 'historico', 'clientes'],
   entregador: ['entregador'],
 };
 
-function paginaInicialDoPapel(role?: keyof typeof paginasPorPapel): Page {
-  return role === 'entregador' ? 'entregador' : role === 'atendente' ? 'pdv' : 'dashboard';
+function paginasPermitidas(role: keyof typeof paginasPorPapel | undefined, plano: PlanoComercial) {
+  const porPapel = role ? paginasPorPapel[role] : [];
+  return porPapel.filter(page => planoPermitePagina(plano, page));
+}
+
+function paginaInicialDoPapel(role: keyof typeof paginasPorPapel | undefined, plano: PlanoComercial): Page {
+  const preferida: Page = role === 'entregador' ? 'entregador' : role === 'atendente' ? 'pdv' : 'dashboard';
+  const permitidas = paginasPermitidas(role, plano);
+  return permitidas.includes(preferida) ? preferida : permitidas[0] || 'plano';
 }
 
 /** Marca vetorial compacta baseada no símbolo orbital da identidade Órbita. */
@@ -84,6 +96,7 @@ function Sidebar({
   alertas,
   entregasPendentes,
   role,
+  plano,
 }: {
   page: Page;
   setPage: (p: Page) => void;
@@ -94,12 +107,13 @@ function Sidebar({
   alertas: number;
   entregasPendentes: number;
   role?: 'owner' | 'gerente' | 'atendente' | 'entregador';
+  plano: PlanoComercial;
 }) {
   const isDark = tema === 'dark';
-  const paginasPermitidas = role ? paginasPorPapel[role] : nav.flatMap(group => group.items.map(item => item.page));
+  const paginasLiberadas = paginasPermitidas(role, plano);
   const navegacaoVisivel = nav
-    .filter(group => group.items.some(item => paginasPermitidas.includes(item.page)))
-    .map(group => ({ ...group, items: group.items.filter(item => paginasPermitidas.includes(item.page)) }));
+    .filter(group => group.items.some(item => paginasLiberadas.includes(item.page)))
+    .map(group => ({ ...group, items: group.items.filter(item => paginasLiberadas.includes(item.page)) }));
 
   return (
     <>
@@ -120,7 +134,10 @@ function Sidebar({
         <div className={`flex items-center gap-2 h-16 px-4 border-b flex-shrink-0 ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
           <OrbitaMark />
           <span className={`font-bold text-lg tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>Órbita</span>
-          <span className={`text-[10px] font-mono ml-auto ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>versão {__APP_VERSION__}</span>
+          <div className="ml-auto text-right leading-tight">
+            <span className={`block text-[10px] font-semibold uppercase ${isDark ? 'text-cyan-300' : 'text-cyan-700'}`}>{configuracaoDoPlano(plano).nome}</span>
+            <span className={`block text-[9px] font-mono ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>versão {__APP_VERSION__}</span>
+          </div>
         </div>
 
         {/* Navegação com scroll suave e invisível */}
@@ -357,16 +374,17 @@ function AppContent() {
   const usuarioCarregadoId = useRef<string | null>(null);
   const { tema, toggleTema, produtos, entregas, caixaAberto, hydrateFromRemote, currentRole } = useStore();
   const location = useLocation();
+  const planoAtual = normalizarPlano(acesso?.assinatura?.plano);
 
   const alertas = produtos.filter(p => p.estoque <= p.estoqueMin).length;
   const entregasPendentes = entregas.filter(e => e.status === 'pendente').length;
   const pageBlocked = !caixaAberto && (page === 'pdv' || page === 'entregas_pdv');
 
   useEffect(() => {
-    if (!currentRole || paginasPorPapel[currentRole].includes(page)) return;
-    const redirect = window.setTimeout(() => setPage(paginaInicialDoPapel(currentRole)), 0);
+    if (!currentRole || paginasPermitidas(currentRole, planoAtual).includes(page)) return;
+    const redirect = window.setTimeout(() => setPage(paginaInicialDoPapel(currentRole, planoAtual)), 0);
     return () => window.clearTimeout(redirect);
-  }, [currentRole, page]);
+  }, [currentRole, page, planoAtual]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', tema === 'dark');
@@ -459,7 +477,7 @@ function AppContent() {
       if (!lojaId) return;
       try {
         const estado = await consultarAcessoDaLoja(lojaId);
-        if (!estado.liberado) setAcesso(estado);
+        setAcesso(estado);
       } catch (error) {
         console.error('Falha ao revalidar assinatura:', error);
         void registrarErroAplicacao({
@@ -509,11 +527,12 @@ function AppContent() {
     dashboard: <Dashboard onNavigate={(p: Page) => setPage(p)} />,
     pdv: <PDV />,
     entregas_pdv: <EntregasPDV />,
-    produtos: <Produtos />,
+    produtos: <Produtos plano={planoAtual} />,
     movimentacoes: <Movimentacoes />,
     compras: <Compras />,
     clientes: <Clientes />,
     ofertas: <Ofertas />,
+    catalogo: <Catalogo />,
     ponto: <PontoEletronico />,
     entregador: <AppEntregador />,
     mapa: <PainelMapa />,
@@ -524,6 +543,8 @@ function AppContent() {
     qpr: <Analises tipo="qpr" />,
     alertas: <Analises tipo="alertas" />,
     backup: <Analises tipo="backup" />,
+    equipe: <UserManagement assinatura={acesso?.assinatura} />,
+    plano: <Planos assinatura={acesso?.assinatura} />,
   }[page];
 
   const isDark = tema === 'dark';
@@ -542,6 +563,7 @@ function AppContent() {
           alertas={alertas}
           entregasPendentes={entregasPendentes}
           role={currentRole}
+          plano={planoAtual}
         />
         <div className="flex-1 flex flex-col h-full overflow-hidden lg:ml-64">
           <Topbar page={page} setMenuOpen={setMenuOpen} tema={tema} />
@@ -566,6 +588,7 @@ export default function App() {
         <Route path="/termos" element={<Termos />} />
         <Route path="/privacidade" element={<Privacidade />} />
         <Route path="/acompanhar/:token" element={<AcompanharEntrega />} />
+        <Route path="/catalogo/:slug" element={<CatalogoPublico />} />
         <Route path="/*" element={<AppContent />} />
       </Routes>
     </BrowserRouter>
