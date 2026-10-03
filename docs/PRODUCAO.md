@@ -9,11 +9,15 @@
 - Aplicar `20260924183909_entregas_rastreabilidade_producao.sql`, implantar a
   função `geocodificar-entrega` e definir o segredo `GEOCODING_CONTACT`.
 - Executar Security Advisor, Performance Advisor e Health Advisor sem alertas críticos.
+- Executar `supabase/checks/ecosystem_contract.sql`; todas as linhas devem
+  retornar `status = ok`.
 - No plano Pro, ativar em Auth Settings a proteção contra senhas vazadas. No
   plano Free, manter senha mínima forte e registrar essa limitação operacional.
 - Testar owner, gerente, atendente e entregador em duas lojas diferentes.
 - Confirmar que nenhuma chave `service_role` está presente no frontend.
 - Fazer um teste de restauração do backup antes de cadastrar clientes pagantes.
+  Use o roteiro de `docs/BACKUP_RESTORE.md` e nunca restaure primeiro sobre
+  produção.
 
 ## Supabase
 
@@ -31,6 +35,8 @@
 - Todo pull request precisa passar pelo workflow `Qualidade`.
 - Publicar somente o artefato gerado por `npm run build`.
 - Configurar domínio HTTPS, endereço de suporte e monitoramento de erros/disponibilidade.
+- Cadastrar a variable `PRODUCTION_URL` no GitHub para ativar o workflow
+  `Monitor de produção`, executado a cada seis horas.
 - Validar instalação e atualização do PWA em Android, iOS e desktop.
 - Preencher `VITE_LEGAL_NAME`, `VITE_LEGAL_DOCUMENT`, `VITE_SUPPORT_EMAIL` e
   `VITE_PRIVACY_EMAIL` no ambiente de produção.

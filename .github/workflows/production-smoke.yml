@@ -1,0 +1,28 @@
+name: Monitor de produção
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      url:
+        description: URL pública do Órbita
+        required: false
+
+jobs:
+  smoke:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.PRODUCTION_URL != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TARGET_URL: ${{ inputs.url || vars.PRODUCTION_URL }}
+    steps:
+      - name: Verificar páginas críticas
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in /login /termos /privacidade; do
+            curl --fail --silent --show-error --location \
+              --retry 3 --retry-all-errors --max-time 20 \
+              "${TARGET_URL%/}${path}" > /dev/null
+          done

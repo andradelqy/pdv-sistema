@@ -449,26 +449,27 @@ bootstrap destrutivo.
 Faça backup, valide primeiro em homologação e aplique somente as migrations
 ainda pendentes.
 
-| Migration                                                    | Finalidade                                                                                               |
-| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `20260913_multitenant_sync.sql`                              | `loja_id`, compartilhamento por loja, compras, rastreio e composição                                     |
-| `20260915_confiabilidade_operacional.sql`                    | auditoria e confirmação atômica da venda                                                                 |
-| `20260915_reparar_itens_venda.sql`                           | recupera vínculos históricos de itens quando possível                                                    |
-| `20260915_restringir_entregador.sql`                         | limita o entregador aos recursos de entrega                                                              |
-| `20260915_tracking_realtime.sql`                             | pontos de GPS e políticas de rastreamento                                                                |
-| `20260916_producao_estoque_compras_crm.sql`                  | inventário, preços, CRM, helpers privados e policies de perfis                                           |
-| `20260916212101_controle_manual_assinaturas.sql`             | assinatura manual e bloqueio restritivo por loja                                                         |
-| `20260918005738_corrigir_auditoria_venda_atomica.sql`        | corrige permissões da auditoria transacional                                                             |
-| `20260918010403_suportar_devolucao_atomica.sql`              | devolução idempotente no fluxo de venda                                                                  |
-| `20260918013910_garantir_item_unico_pedido_compra.sql`       | chave de conflito segura dos itens de compra                                                             |
-| `20260921023856_central_ofertas_whatsapp.sql`                | ofertas, consentimento e campanhas assistidas                                                            |
-| `20260921200635_whatsapp_embedded_signup_autonomo.sql`       | estruturas futuras da integração profissional                                                            |
-| `20260923182718_production_hardening.sql`                    | índices, grants, telemetria, PIN seguro e recebimento atômico                                            |
-| `20260923211311_corrigir_advisors_seguranca_performance.sql` | corrige os avisos dos Advisors, consolida policies, remove índices duplicados e isola RPCs privilegiadas |
-| `20260924183909_entregas_rastreabilidade_producao.sql`       | operações atômicas, RLS por papel, prova de entrega, timeline e rastreamento público                     |
-| `20261001031741_planos_comerciais_funcionais.sql`            | planos Básico/Pro/Empresarial, limites de usuários e bloqueio dos módulos avançados                      |
-| `20261003000413_catalogo_virtual_showcase.sql`               | catálogo virtual multiempresa, categorias, apresentação de produtos, imagens e RLS                       |
-| `20261003012000_catalogo_comercial_multilingue.sql`          | idiomas, configuração comercial, métricas anonimizadas, RLS e indicadores do catálogo                    |
+| Migration                                                       | Finalidade                                                                                               |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `20260913_multitenant_sync.sql`                                 | `loja_id`, compartilhamento por loja, compras, rastreio e composição                                     |
+| `20260915_confiabilidade_operacional.sql`                       | auditoria e confirmação atômica da venda                                                                 |
+| `20260915010000_reparar_itens_venda.sql`                        | recupera vínculos históricos de itens quando possível                                                    |
+| `20260915020000_restringir_entregador.sql`                      | limita o entregador aos recursos de entrega                                                              |
+| `20260915030000_tracking_realtime.sql`                          | pontos de GPS e políticas de rastreamento                                                                |
+| `20260916_producao_estoque_compras_crm.sql`                     | inventário, preços, CRM, helpers privados e policies de perfis                                           |
+| `20260916212101_controle_manual_assinaturas.sql`                | assinatura manual e bloqueio restritivo por loja                                                         |
+| `20260918005738_corrigir_auditoria_venda_atomica.sql`           | corrige permissões da auditoria transacional                                                             |
+| `20260918010403_suportar_devolucao_atomica.sql`                 | devolução idempotente no fluxo de venda                                                                  |
+| `20260918013910_garantir_item_unico_pedido_compra.sql`          | chave de conflito segura dos itens de compra                                                             |
+| `20260921023856_central_ofertas_whatsapp.sql`                   | ofertas, consentimento e campanhas assistidas                                                            |
+| `20260921200635_whatsapp_embedded_signup_autonomo.sql`          | estruturas futuras da integração profissional                                                            |
+| `20260923182718_production_hardening.sql`                       | índices, grants, telemetria, PIN seguro e recebimento atômico                                            |
+| `20260923211311_corrigir_advisors_seguranca_performance.sql`    | corrige os avisos dos Advisors, consolida policies, remove índices duplicados e isola RPCs privilegiadas |
+| `20260924183909_entregas_rastreabilidade_producao.sql`          | operações atômicas, RLS por papel, prova de entrega, timeline e rastreamento público                     |
+| `20261001031741_planos_comerciais_funcionais.sql`               | planos Básico/Pro/Empresarial, limites de usuários e bloqueio dos módulos avançados                      |
+| `20261003000413_catalogo_virtual_showcase.sql`                  | catálogo virtual multiempresa, categorias, apresentação de produtos, imagens e RLS                       |
+| `20261003012000_catalogo_comercial_multilingue.sql`             | idiomas, configuração comercial, métricas anonimizadas, RLS e indicadores do catálogo                    |
+| `20261003110949_corrigir_advisors_entregas_e_monitoramento.sql` | isola RPCs privilegiadas de entrega e elimina policies permissivas duplicadas                            |
 
 Após aplicar:
 
@@ -524,10 +525,16 @@ A suíte atual possui testes para:
 - Planejamento de compras.
 - Alocação e redistribuição do orçamento.
 - Separação de trajetos, rejeição de GPS inválido, atraso e comprovante de entrega.
+- Catálogo multilíngue, carrinho, pedido mínimo e total com entrega em desktop
+  e celular.
 
 O workflow `.github/workflows/quality.yml` executa instalação limpa, lint,
 testes unitários, build, testes E2E e publica os artefatos de diagnóstico e o
 bundle em pushes para `main` e pull requests.
+
+O workflow `.github/workflows/production-smoke.yml` testa `/login`, `/termos` e
+`/privacidade` a cada seis horas. Cadastre `PRODUCTION_URL` nas variables do
+repositório para ativá-lo.
 
 ## Publicação
 
@@ -542,6 +549,8 @@ Antes de publicar:
 - Preencha razão social, contato, suporte e encarregado nos Termos e na Política
   de Privacidade.
 - Execute os testes de aceite descritos em [`docs/PRODUCAO.md`](docs/PRODUCAO.md).
+- Execute `supabase/checks/ecosystem_contract.sql` no banco de produção e no
+  projeto usado para ensaio de restauração.
 - Publique somente o artefato gerado por `npm run build`.
 
 Consulte também o
@@ -570,3 +579,5 @@ Consulte também o
   pagantes.
 - [`docs/ENTREGAS.md`](docs/ENTREGAS.md): implantação, segurança e testes do
   fluxo de entregas.
+- [`docs/BACKUP_RESTORE.md`](docs/BACKUP_RESTORE.md): ensaio seguro de backup e
+  restauração.
